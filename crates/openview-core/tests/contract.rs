@@ -315,5 +315,95 @@ fn worker_runtime_spec_tracks_binary_lifecycle_and_safe_env_key_names_only() {
 
     assert_eq!(runtime.health_state, WorkerHealthState::Ready);
     assert_eq!(runtime.env_keys, vec!["OPENVIEW_WORKER_CONFIG"]);
+    assert!(runtime.started_at.is_some());
     assert!(runtime.last_heartbeat_at.is_some());
+    assert!(runtime.stopped_at.is_none());
+    assert_eq!(runtime.restart_count, 0);
+}
+
+#[test]
+fn openview_runtime_supervises_worker_start_heartbeat_fail_restart_and_stop() {
+    use openview_core::{WorkerHealthState, WorkerRuntimeEventKind, WorkerRuntimeSpec};
+
+    let mut runtime = OpenViewRuntime::default();
+    runtime
+        .register_worker_runtime(
+            WorkerRuntimeSpec::new("shell.sandbox", "openview-worker-shell")
+                .arg("--stdio")
+                .env_key("OPENVIEW_WORKER_CONFIG"),
+        )
+        .expect("runtime registered");
+
+    let started = runtime
+        .start_worker_runtime("shell.sandbox")
+        .expect("worker started");
+    let started_at = started.started_at.expect("start timestamp recorded");
+    assert_eq!(started.health_state, WorkerHealthState::Starting);
+    assert!(started.last_heartbeat_at.is_none());
+
+    let ready = runtime
+        .heartbeat_worker_runtime("shell.sandbox")
+        .expect("worker heartbeat accepted");
+    assert_eq!(ready.health_state, WorkerHealthState::Ready);
+    assert!(ready.last_heartbeat_at.expect("heartbeat recorded") >= started_at);
+
+    let failed = runtime
+        .fail_worker_runtime("shell.sandbox", "child process exited")
+        .expect("worker failure recorded");
+    let failed_at = failed
+        .last_failure
+        .as_ref()
+        .expect("failure details recorded")
+        .failed_at;
+    assert_eq!(failed.health_state, WorkerHealthState::Failed);
+    assert_eq!(
+        failed.last_failure.as_ref().unwrap().reason,
+        "child process exited"
+    );
+
+    let restarted = runtime
+        .restart_worker_runtime("shell.sandbox")
+        .expect("worker restarted");
+    assert_eq!(restarted.health_state, WorkerHealthState::Starting);
+    assert_eq!(restarted.restart_count, 1);
+    assert!(restarted.started_at.expect("restart timestamp recorded") >= failed_at);
+    assert_eq!(
+        restarted.last_failure.as_ref().unwrap().reason,
+        "child process exited"
+    );
+
+    let ready_again = runtime
+        .heartbeat_worker_runtime("shell.sandbox")
+        .expect("worker heartbeat accepted after restart");
+    assert_eq!(ready_again.health_state, WorkerHealthState::Ready);
+    assert_eq!(ready_again.restart_count, 1);
+
+    let stopped = runtime
+        .stop_worker_runtime("shell.sandbox")
+        .expect("worker stopped");
+    assert_eq!(stopped.health_state, WorkerHealthState::Stopped);
+    assert!(stopped.stopped_at.is_some());
+    assert_eq!(
+        runtime
+            .worker_runtime("shell.sandbox")
+            .expect("runtime exists")
+            .health_state,
+        WorkerHealthState::Stopped
+    );
+
+    let events = runtime.worker_runtime_events();
+    assert_eq!(
+        events.iter().map(|event| event.kind).collect::<Vec<_>>(),
+        vec![
+            WorkerRuntimeEventKind::Started,
+            WorkerRuntimeEventKind::Heartbeat,
+            WorkerRuntimeEventKind::Failed,
+            WorkerRuntimeEventKind::Restarted,
+            WorkerRuntimeEventKind::Heartbeat,
+            WorkerRuntimeEventKind::Stopped,
+        ]
+    );
+    assert_eq!(events[0].sequence, 1);
+    assert_eq!(events[2].reason.as_deref(), Some("child process exited"));
+    assert_eq!(events[5].state, WorkerHealthState::Stopped);
 }

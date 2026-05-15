@@ -31,6 +31,13 @@ Owns approval requests and resolutions. Used before risky functions such as comm
 
 Runs scoped commands under a sandbox profile. Must declare filesystem roots, process permissions, network policy, and approval requirements.
 
+The Rust foundation can evaluate sandbox policy without executing anything:
+
+- read and write checks are scoped by declared roots and denied roots;
+- command checks use exact command identities, not shell command lines;
+- network checks require network mode plus an exact allowed host;
+- secrets are referenced by configured names only, never by raw values.
+
 ### `turn.orchestrator`
 
 Owns durable agent turns, state transitions, function-call lifecycle, transcript, event stream, and teardown.
@@ -61,6 +68,39 @@ Stores artifacts, screenshots, logs, payloads, and generated resources.
 - `ci.status`
 - `budget.ledger`
 - `sensor.watch`
+
+## iii primitive mapping
+
+OpenView worker manifests should stay typed and reviewable while the runtime adapter routes work to iii primitives:
+
+| OpenView worker/resource | iii target | Operator contract |
+|---|---|---|
+| `approval.gate` | `approval::list_pending`, `approval::resolve`, plus `hook-fanout::publish_collect` | Risky work blocks before side effects; approvals, rejections, expirations, and comments are replayable evidence. |
+| `shell.sandbox` | shell sandbox worker | Commands run only inside declared filesystem, process, network, and credential policy. |
+| `turn.orchestrator` | `run::start_and_wait` for Hermes agent turns | Agent execution is a bounded run step with transcript, output, status, and failure evidence. |
+| `session.state` | `session-tree::*` | Transcript/history, branches, compaction markers, and exportable active paths survive restart. |
+| `storage.objects` and `Database` | `iii-database` transaction fallback | Runs, tasks, checkpoints, waits, idempotency keys, leases, retry state, and events are durable even when queue/stream workers are unavailable. |
+| `EventStream` | `stream::set`, `stream::list` | UI panes and CLIs see ordered event slices and live updates. |
+| `HookTopic` | `hook-fanout::publish_collect` | Policy, approval, budget, and evidence subscribers can inspect or block calls consistently. |
+| control-plane harness | harness worker | Local UI/event streaming composes the same worker surfaces operators inspect. |
+
+Implemented contract/runtime surfaces:
+
+- `QueueTask` and `OpenViewControlApi` cover enqueue, compatible polling, lease ownership, visibility timeout, current-lease complete/fail, stale lease rejection, retry backoff, terminal failed/dead-letter state, explicit requeue, and expired-lease recovery.
+- `LocalRunStore` covers workflow definitions, run snapshots, run events, approvals embedded in runs, worker runtimes, queue tasks, artifacts, restart snapshots, and evidence bundle summaries.
+- Worker runtime heartbeat is modeled in supervision events; `OpenViewControlApi::heartbeat_worker_leases` extends active owned queue leases from the same worker heartbeat, missed heartbeats still fall back to visibility-timeout recovery, and the process supervisor emits a sanitized heartbeat event naming that control API call-site.
+- Concurrency is observable through `QueueConcurrencySnapshotResponse`: local policy reports active leases, visible available tasks, requested max concurrency, and limit blocking; delegated iii-queue policy is represented without claiming local enforcement.
+- `cargo run -p openview-cli -- queues readiness` exposes a deterministic operator snapshot for queue schema records, migration ownership, worker heartbeat-to-lease wiring, concurrency policy observability, and the live iii database E2E lifecycle without reading credentials.
+
+The adapter must not require the `iii` CLI to be on `PATH`; local integration should use a configured binary path or API client. Tests for worker manifests should keep passing without a live iii runtime. `scripts/e2e_iii_runtime.sh` is the explicit live check for the iii engine and harness worker stack.
+
+For database-backed task-state verification, run:
+
+```bash
+OPENVIEW_III_E2E_DATABASE=1 OPENVIEW_III_MANAGED=1 scripts/e2e_iii_runtime.sh
+```
+
+That mode starts `iii-database`, applies the owned durable queue schema bootstrap, verifies durable tables/indexes/columns, and validates transaction/query/execute paths for task lease, heartbeat, recovery, retry, and dead-letter state. The default SQLite file is `$III_E2E_DEMO_DIR/openview-e2e.db`, which resolves to `/private/tmp/openview-iii-e2e/openview-e2e.db` unless overridden.
 
 ## Worker review checklist
 

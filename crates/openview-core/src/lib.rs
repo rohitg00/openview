@@ -199,6 +199,16 @@ impl FunctionSpec {
         self
     }
 
+    pub fn request_schema(mut self, schema: Value) -> Self {
+        self.request_schema = schema;
+        self
+    }
+
+    pub fn response_schema(mut self, schema: Value) -> Self {
+        self.response_schema = schema;
+        self
+    }
+
     pub fn visibility(mut self, visibility: FunctionVisibility) -> Self {
         self.visibility = visibility;
         self
@@ -935,6 +945,7 @@ impl OpenViewRuntime {
 
 pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
     vec![
+        git_worktree_worker_manifest(),
         WorkerManifest::new("approval.gate", "0.1.0")
             .description("Human approval queue for risky agent actions")
             .resource(ResourceKind::ApprovalQueue)
@@ -979,4 +990,143 @@ pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
             .resource(ResourceKind::ObjectStorage)
             .function(FunctionSpec::new("storage::put", CapabilityRisk::Write)),
     ]
+}
+
+pub fn git_worktree_worker_manifest() -> WorkerManifest {
+    const WORKSPACE_ROOT: &str = "${OPENVIEW_WORKSPACE_ROOT}";
+    const WORKTREE_ROOT: &str = "${OPENVIEW_WORKTREE_ROOT}";
+
+    WorkerManifest::new("git.worktree", "0.1.0")
+        .description("Git worktree lifecycle and status operations with scoped filesystem access")
+        .target(BackendTarget::LocalBinary)
+        .resource(ResourceKind::GitWorktree)
+        .resource(ResourceKind::Filesystem)
+        .resource(ResourceKind::Process)
+        .function(
+            FunctionSpec::new("git.worktree::list", CapabilityRisk::Read)
+                .description("List worktrees for a repository")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["repo_path"],
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Repository path under the workspace root"}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["worktrees"],
+                    "properties": {
+                        "worktrees": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["path"],
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "branch": {"type": ["string", "null"]},
+                                    "head": {"type": ["string", "null"]},
+                                    "bare": {"type": "boolean"},
+                                    "detached": {"type": "boolean"}
+                                },
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("git.worktree::create", CapabilityRisk::Write)
+                .description("Create a new git worktree")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["repo_path", "worktree_path", "branch"],
+                    "properties": {
+                        "repo_path": {"type": "string", "description": "Repository path under the workspace root"},
+                        "worktree_path": {"type": "string", "description": "New worktree path under the worktree root"},
+                        "branch": {"type": "string"},
+                        "base_ref": {"type": ["string", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["path", "branch", "created"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "branch": {"type": "string"},
+                        "head": {"type": ["string", "null"]},
+                        "created": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true),
+        )
+        .function(
+            FunctionSpec::new("git.worktree::status", CapabilityRisk::Read)
+                .description("Read porcelain status for a worktree")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["worktree_path"],
+                    "properties": {
+                        "worktree_path": {"type": "string", "description": "Worktree path under the worktree root"}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["clean", "entries"],
+                    "properties": {
+                        "clean": {"type": "boolean"},
+                        "branch": {"type": ["string", "null"]},
+                        "entries": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["path", "status"],
+                                "properties": {
+                                    "path": {"type": "string"},
+                                    "status": {"type": "string"}
+                                },
+                                "additionalProperties": false
+                            }
+                        }
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("git.worktree::remove", CapabilityRisk::Write)
+                .description("Remove a git worktree")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["worktree_path"],
+                    "properties": {
+                        "worktree_path": {"type": "string", "description": "Worktree path under the worktree root"},
+                        "force": {"type": "boolean", "default": false}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["path", "removed"],
+                    "properties": {
+                        "path": {"type": "string"},
+                        "removed": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true),
+        )
+        .sandbox(
+            SandboxProfile::locked_down()
+                .allow_workspace_read(WORKSPACE_ROOT)
+                .allow_workspace_read(WORKTREE_ROOT)
+                .allow_workspace_write(WORKTREE_ROOT)
+                .allow_command("git")
+                .deny_network(),
+        )
 }

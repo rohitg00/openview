@@ -1,3 +1,4 @@
+pub use openview_core::git_worktree_worker_manifest;
 use openview_core::{CapabilityRisk, FunctionSpec, ResourceKind, WorkerManifest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

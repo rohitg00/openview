@@ -1,8 +1,76 @@
 use openview_core::{
-    AgentBlueprint, BackendTarget, CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec,
-    OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile, TriggerSpec,
-    WorkerManifest,
+    git_worktree_worker_manifest, AgentBlueprint, BackendTarget, CapabilityRisk, ConnectionGraph,
+    ExecutionMode, FunctionSpec, FunctionVisibility, OpenViewRuntime, PermissionPolicy,
+    ResourceKind, RunPhase, SandboxProfile, TriggerSpec, WorkerManifest,
 };
+
+#[test]
+fn built_in_catalog_contains_first_class_git_worktree_worker() {
+    let catalog = openview_core::built_in_worker_catalog();
+    let manifest = catalog
+        .iter()
+        .find(|worker| worker.name == "git.worktree")
+        .expect("git.worktree is registered in the built-in catalog");
+
+    assert_eq!(manifest, &git_worktree_worker_manifest());
+}
+
+#[test]
+fn git_worktree_manifest_declares_locked_down_contract() {
+    let manifest = git_worktree_worker_manifest();
+
+    assert_eq!(manifest.name, "git.worktree");
+    assert!(manifest.targets.contains(&BackendTarget::LocalBinary));
+    assert!(manifest.resources.contains(&ResourceKind::GitWorktree));
+    assert!(manifest.resources.contains(&ResourceKind::Filesystem));
+    assert!(manifest.resources.contains(&ResourceKind::Process));
+
+    let sandbox = manifest.sandbox.as_ref().expect("sandbox declared");
+    assert_eq!(sandbox.name, "locked-down");
+    assert!(sandbox
+        .filesystem
+        .read_roots
+        .contains("${OPENVIEW_WORKSPACE_ROOT}"));
+    assert!(sandbox
+        .filesystem
+        .read_roots
+        .contains("${OPENVIEW_WORKTREE_ROOT}"));
+    assert!(sandbox
+        .filesystem
+        .write_roots
+        .contains("${OPENVIEW_WORKTREE_ROOT}"));
+    assert!(!sandbox.network.allow);
+    assert!(sandbox.process.allow_exec);
+    assert!(sandbox.process.allowed_commands.contains("git"));
+
+    let function = |id: &str| {
+        manifest
+            .functions
+            .iter()
+            .find(|function| function.id == id)
+            .unwrap_or_else(|| panic!("missing function {id}"))
+    };
+
+    for id in ["git.worktree::list", "git.worktree::status"] {
+        let function = function(id);
+        assert_eq!(function.risk, CapabilityRisk::Read);
+        assert!(!function.approval_required);
+        assert_eq!(function.visibility, FunctionVisibility::Ui);
+    }
+    for id in ["git.worktree::create", "git.worktree::remove"] {
+        let function = function(id);
+        assert_eq!(function.risk, CapabilityRisk::Write);
+        assert!(function.approval_required);
+        assert!(manifest.security.approval_required_functions.contains(id));
+    }
+
+    for function in &manifest.functions {
+        assert_eq!(function.request_schema["type"], "object");
+        assert!(function.request_schema.get("properties").is_some());
+        assert_eq!(function.response_schema["type"], "object");
+        assert!(function.response_schema.get("properties").is_some());
+    }
+}
 
 #[test]
 fn registers_rust_workers_with_capabilities_resources_and_sandbox_policy() {

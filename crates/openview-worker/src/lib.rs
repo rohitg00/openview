@@ -1,7 +1,9 @@
-pub use openview_core::{git_worktree_worker_manifest, terminal_pty_worker_manifest};
+pub use openview_core::{
+    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
+    hermes_agent_worker_manifest, opencode_agent_worker_manifest, terminal_pty_worker_manifest,
+};
 use openview_core::{
-    BackendTarget, CapabilityRisk, FunctionSpec, FunctionVisibility, ResourceKind, SandboxProfile,
-    WorkerManifest,
+    BackendTarget, CapabilityRisk, FunctionSpec, FunctionVisibility, ResourceKind, WorkerManifest,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -137,6 +139,272 @@ impl HermesSessionRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct HermesCommandInvocation {
+    pub binary: String,
+    pub argv: Vec<String>,
+    pub env_keys: Vec<String>,
+    pub working_directory: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum AgentCliKind {
+    Codex,
+    ClaudeCode,
+    Hermes,
+    OpenCode,
+}
+
+impl AgentCliKind {
+    pub fn worker_id(self) -> &'static str {
+        match self {
+            Self::Codex => "codex.agent",
+            Self::ClaudeCode => "claude-code.agent",
+            Self::Hermes => "hermes.agent",
+            Self::OpenCode => "opencode.agent",
+        }
+    }
+
+    pub fn binary(self) -> &'static str {
+        match self {
+            Self::Codex => "codex",
+            Self::ClaudeCode => "claude",
+            Self::Hermes => "hermes",
+            Self::OpenCode => "opencode",
+        }
+    }
+
+    pub fn env_keys(self) -> Vec<String> {
+        match self {
+            Self::Codex => ["CODEX_HOME", "OPENAI_API_KEY"],
+            Self::ClaudeCode => ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
+            Self::Hermes => ["HERMES_HOME", "HERMES_PROFILE"],
+            Self::OpenCode => ["OPENCODE_HOME", "OPENCODE_API_KEY"],
+        }
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentCliApprovalPolicy {
+    #[default]
+    Ask,
+    Never,
+    Yolo,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCliSessionRequest {
+    pub runner: AgentCliKind,
+    pub workspace: String,
+    pub prompt: String,
+    pub model: Option<String>,
+    pub profile: Option<String>,
+    pub session_id: Option<String>,
+    pub skills: Vec<String>,
+    pub toolsets: Vec<String>,
+    pub approval_policy: AgentCliApprovalPolicy,
+    pub json_events: bool,
+    pub extra_args: Vec<String>,
+}
+
+impl AgentCliSessionRequest {
+    pub fn new(
+        runner: AgentCliKind,
+        workspace: impl Into<String>,
+        prompt: impl Into<String>,
+    ) -> Self {
+        Self {
+            runner,
+            workspace: workspace.into(),
+            prompt: prompt.into(),
+            model: None,
+            profile: None,
+            session_id: None,
+            skills: Vec::new(),
+            toolsets: Vec::new(),
+            approval_policy: AgentCliApprovalPolicy::default(),
+            json_events: true,
+            extra_args: Vec::new(),
+        }
+    }
+
+    pub fn model(mut self, model: impl Into<String>) -> Self {
+        self.model = Some(model.into());
+        self
+    }
+
+    pub fn profile(mut self, profile: impl Into<String>) -> Self {
+        self.profile = Some(profile.into());
+        self
+    }
+
+    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = Some(session_id.into());
+        self
+    }
+
+    pub fn skill(mut self, skill: impl Into<String>) -> Self {
+        self.skills.push(skill.into());
+        self
+    }
+
+    pub fn toolset(mut self, toolset: impl Into<String>) -> Self {
+        self.toolsets.push(toolset.into());
+        self
+    }
+
+    pub fn approval_policy(mut self, approval_policy: AgentCliApprovalPolicy) -> Self {
+        self.approval_policy = approval_policy;
+        self
+    }
+
+    pub fn json_events(mut self, enabled: bool) -> Self {
+        self.json_events = enabled;
+        self
+    }
+
+    pub fn extra_arg(mut self, arg: impl Into<String>) -> Self {
+        self.extra_args.push(arg.into());
+        self
+    }
+
+    pub fn command_invocation(&self) -> AgentCliCommandInvocation {
+        let mut argv = match self.runner {
+            AgentCliKind::Codex => self.codex_argv(),
+            AgentCliKind::ClaudeCode => self.claude_code_argv(),
+            AgentCliKind::Hermes => self.hermes_argv(),
+            AgentCliKind::OpenCode => self.opencode_argv(),
+        };
+        argv.extend(self.extra_args.clone());
+
+        AgentCliCommandInvocation {
+            worker_id: self.runner.worker_id().to_string(),
+            binary: self.runner.binary().to_string(),
+            argv,
+            env_keys: self.runner.env_keys(),
+            working_directory: Some(self.workspace.clone()),
+        }
+    }
+
+    fn codex_argv(&self) -> Vec<String> {
+        let mut argv = vec![
+            "exec".to_string(),
+            "--cd".to_string(),
+            self.workspace.clone(),
+            "--sandbox".to_string(),
+            "workspace-write".to_string(),
+        ];
+        match self.approval_policy {
+            AgentCliApprovalPolicy::Ask => {
+                argv.push("--ask-for-approval".to_string());
+                argv.push("on-request".to_string());
+            }
+            AgentCliApprovalPolicy::Never => {
+                argv.push("--ask-for-approval".to_string());
+                argv.push("never".to_string());
+            }
+            AgentCliApprovalPolicy::Yolo => {
+                argv.push("--dangerously-bypass-approvals-and-sandbox".to_string());
+            }
+        }
+        if self.json_events {
+            argv.push("--json".to_string());
+        }
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if let Some(profile) = &self.profile {
+            argv.push("--profile".to_string());
+            argv.push(profile.clone());
+        }
+        if let Some(session_id) = &self.session_id {
+            argv.push("resume".to_string());
+            argv.push(session_id.clone());
+            argv.push(self.prompt.clone());
+        } else {
+            argv.push(self.prompt.clone());
+        }
+        argv
+    }
+
+    fn claude_code_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if self.json_events {
+            argv.push("--output-format".to_string());
+            argv.push("stream-json".to_string());
+        }
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        if self.approval_policy == AgentCliApprovalPolicy::Yolo {
+            argv.push("--dangerously-skip-permissions".to_string());
+        }
+        argv.push("-p".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn hermes_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if let Some(profile) = &self.profile {
+            argv.push("--profile".to_string());
+            argv.push(profile.clone());
+        }
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        for skill in &self.skills {
+            argv.push("--skills".to_string());
+            argv.push(skill.clone());
+        }
+        if !self.toolsets.is_empty() {
+            argv.push("--toolsets".to_string());
+            argv.push(self.toolsets.join(","));
+        }
+        if self.approval_policy == AgentCliApprovalPolicy::Yolo {
+            argv.push("--yolo".to_string());
+        }
+        argv.push("chat".to_string());
+        argv.push("--query".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn opencode_argv(&self) -> Vec<String> {
+        let mut argv = vec!["run".to_string()];
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if let Some(session_id) = &self.session_id {
+            argv.push("--session".to_string());
+            argv.push(session_id.clone());
+        }
+        if self.approval_policy == AgentCliApprovalPolicy::Yolo {
+            argv.push("--yes".to_string());
+        }
+        argv.push(self.prompt.clone());
+        argv
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AgentCliCommandInvocation {
+    pub worker_id: String,
     pub binary: String,
     pub argv: Vec<String>,
     pub env_keys: Vec<String>,
@@ -2315,148 +2583,4 @@ pub fn shell_sandbox_worker_manifest() -> WorkerManifest {
         .resource(ResourceKind::Process)
         .function(FunctionSpec::new("shell::plan", CapabilityRisk::Read))
         .function(FunctionSpec::new("shell::run", CapabilityRisk::Exec).approval_required(true))
-}
-
-pub fn hermes_agent_worker_manifest() -> WorkerManifest {
-    const WORKSPACE_ROOT: &str = "${OPENVIEW_WORKSPACE_ROOT}";
-    const HERMES_BINARY: &str = "hermes";
-
-    let mut manifest = WorkerManifest::new("hermes.agent", "0.1.0")
-        .description("Hermes Agent session lifecycle, prompt delivery, event streaming, and approval resolution")
-        .target(BackendTarget::LocalBinary)
-        .resource(ResourceKind::SessionState)
-        .resource(ResourceKind::EventStream)
-        .resource(ResourceKind::ApprovalQueue)
-        .resource(ResourceKind::Filesystem)
-        .resource(ResourceKind::Process)
-        .resource(ResourceKind::CredentialVault)
-        .resource(ResourceKind::ModelProvider)
-        .function(
-            FunctionSpec::new("hermes.agent::spawn_session", CapabilityRisk::Exec)
-                .description("Start or resume a Hermes Agent session in a scoped workspace")
-                .request_schema(json!({
-                    "type": "object",
-                    "required": ["profile", "prompt", "workspace"],
-                    "properties": {
-                        "profile": {"type": "string", "description": "Hermes profile name passed with --profile"},
-                        "prompt": {"type": "string", "description": "Initial user prompt or task instruction"},
-                        "workspace": {"type": "string", "description": "Workspace directory under the OpenView workspace root"},
-                        "session_id": {"type": ["string", "null"], "description": "Optional Hermes session id to resume"},
-                        "skills": {"type": "array", "items": {"type": "string"}, "default": []},
-                        "toolsets": {"type": "array", "items": {"type": "string"}, "default": []},
-                        "approval_policy": {"type": "string", "enum": ["ask", "yolo"], "default": "ask"}
-                    },
-                    "additionalProperties": false
-                }))
-                .response_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "started", "event_stream"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "started": {"type": "boolean"},
-                        "event_stream": {"type": "string"},
-                        "pid": {"type": ["integer", "null"]},
-                        "approval_queue": {"type": ["string", "null"]}
-                    },
-                    "additionalProperties": false
-                }))
-                .approval_required(true)
-                .visibility(FunctionVisibility::Ui),
-        )
-        .function(
-            FunctionSpec::new("hermes.agent::send_prompt", CapabilityRisk::State)
-                .description("Send a follow-up prompt to an existing Hermes session")
-                .request_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "prompt"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "prompt": {"type": "string"}
-                    },
-                    "additionalProperties": false
-                }))
-                .response_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "accepted"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "accepted": {"type": "boolean"},
-                        "event_stream": {"type": ["string", "null"]}
-                    },
-                    "additionalProperties": false
-                }))
-                .approval_required(true)
-                .visibility(FunctionVisibility::Ui),
-        )
-        .function(
-            FunctionSpec::new("hermes.agent::stream_events", CapabilityRisk::Read)
-                .description("Read the event stream for a Hermes session")
-                .request_schema(json!({
-                    "type": "object",
-                    "required": ["session_id"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "after_sequence": {"type": "integer", "minimum": 0, "default": 0},
-                        "limit": {"type": "integer", "minimum": 1, "default": 100}
-                    },
-                    "additionalProperties": false
-                }))
-                .response_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "events", "next_after_sequence"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "events": {"type": "array", "items": {"type": "object"}},
-                        "next_after_sequence": {"type": "integer", "minimum": 0},
-                        "has_more": {"type": "boolean"}
-                    },
-                    "additionalProperties": false
-                }))
-                .visibility(FunctionVisibility::Ui),
-        )
-        .function(
-            FunctionSpec::new("hermes.agent::resolve_approval", CapabilityRisk::Approval)
-                .description("Approve or deny a pending Hermes tool approval")
-                .request_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "approval_id", "approved"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "approval_id": {"type": "string"},
-                        "approved": {"type": "boolean"},
-                        "reason": {"type": ["string", "null"]}
-                    },
-                    "additionalProperties": false
-                }))
-                .response_schema(json!({
-                    "type": "object",
-                    "required": ["session_id", "approval_id", "resolved"],
-                    "properties": {
-                        "session_id": {"type": "string"},
-                        "approval_id": {"type": "string"},
-                        "resolved": {"type": "boolean"}
-                    },
-                    "additionalProperties": false
-                }))
-                .visibility(FunctionVisibility::Ui),
-        )
-        .sandbox(
-            SandboxProfile::locked_down()
-                .allow_workspace_read(WORKSPACE_ROOT)
-                .allow_workspace_write(WORKSPACE_ROOT)
-                .allow_command(HERMES_BINARY),
-        );
-
-    manifest.binary_name = Some(HERMES_BINARY.to_string());
-    manifest.language = "python".to_string();
-    manifest.deploy_kind = "local_cli".to_string();
-    manifest.default_config = json!({
-        "binary": HERMES_BINARY,
-        "env_keys": ["HERMES_PROFILE", "HERMES_HOME"],
-        "session_id_source": "hermes_session_id",
-        "event_stream": "openview.worker.hermes.agent.events",
-        "approval_queue": "openview.worker.hermes.agent.approvals",
-        "approval_policy": "ask"
-    });
-    manifest
 }

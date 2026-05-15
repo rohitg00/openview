@@ -1,8 +1,9 @@
 use openview_core::{
-    git_worktree_worker_manifest, terminal_pty_worker_manifest, AgentBlueprint, BackendTarget,
-    CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec, FunctionVisibility,
-    OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile, TriggerSpec,
-    WorkerManifest,
+    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
+    hermes_agent_worker_manifest, opencode_agent_worker_manifest, terminal_pty_worker_manifest,
+    AgentBlueprint, BackendTarget, CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec,
+    FunctionVisibility, OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile,
+    TriggerSpec, WorkerManifest,
 };
 
 #[test]
@@ -25,6 +26,94 @@ fn built_in_catalog_contains_first_class_terminal_pty_worker() {
         .expect("terminal.pty is registered in the built-in catalog");
 
     assert_eq!(manifest, &terminal_pty_worker_manifest());
+}
+
+#[test]
+fn built_in_catalog_contains_first_class_agent_cli_workers() {
+    let catalog = openview_core::built_in_worker_catalog();
+    for (name, expected) in [
+        ("codex.agent", codex_agent_worker_manifest()),
+        ("claude-code.agent", claude_code_agent_worker_manifest()),
+        ("hermes.agent", hermes_agent_worker_manifest()),
+        ("opencode.agent", opencode_agent_worker_manifest()),
+    ] {
+        let manifest = catalog
+            .iter()
+            .find(|worker| worker.name == name)
+            .unwrap_or_else(|| panic!("{name} is registered in the built-in catalog"));
+        assert_eq!(manifest, &expected);
+    }
+}
+
+#[test]
+fn agent_cli_manifests_declare_orca_style_worktree_runner_contracts() {
+    for (name, binary) in [
+        ("codex.agent", "codex"),
+        ("claude-code.agent", "claude"),
+        ("hermes.agent", "hermes"),
+        ("opencode.agent", "opencode"),
+    ] {
+        let manifest = match name {
+            "codex.agent" => codex_agent_worker_manifest(),
+            "claude-code.agent" => claude_code_agent_worker_manifest(),
+            "hermes.agent" => hermes_agent_worker_manifest(),
+            "opencode.agent" => opencode_agent_worker_manifest(),
+            _ => unreachable!(),
+        };
+        assert_eq!(manifest.name, name);
+        assert_eq!(manifest.binary_name.as_deref(), Some(binary));
+        assert_eq!(manifest.deploy_kind, "local_cli");
+        assert!(manifest.targets.contains(&BackendTarget::LocalBinary));
+        assert!(manifest.resources.contains(&ResourceKind::GitWorktree));
+        assert!(manifest.resources.contains(&ResourceKind::Process));
+        assert!(manifest.resources.contains(&ResourceKind::SessionState));
+        assert!(manifest.resources.contains(&ResourceKind::EventStream));
+        assert!(manifest.resources.contains(&ResourceKind::ApprovalQueue));
+        assert!(manifest.dependencies.contains("git.worktree"));
+        assert!(manifest.dependencies.contains("shell.sandbox"));
+        assert!(manifest.dependencies.contains("approval.gate"));
+
+        let sandbox = manifest.sandbox.as_ref().expect("sandbox declared");
+        assert!(sandbox
+            .filesystem
+            .read_roots
+            .contains("${OPENVIEW_WORKSPACE_ROOT}"));
+        assert!(sandbox
+            .filesystem
+            .write_roots
+            .contains("${OPENVIEW_WORKTREE_ROOT}"));
+        assert!(sandbox.process.allowed_commands.contains(binary));
+        assert!(sandbox.network.allow);
+        assert!(sandbox
+            .network
+            .hosts
+            .contains("${OPENVIEW_AGENT_PROVIDER_HOST}"));
+
+        let spawn = manifest
+            .functions
+            .iter()
+            .find(|function| function.id == format!("{name}::spawn_session"))
+            .expect("spawn_session declared");
+        assert_eq!(spawn.risk, CapabilityRisk::Exec);
+        assert!(spawn.approval_required);
+        assert_eq!(spawn.visibility, FunctionVisibility::Ui);
+
+        for suffix in ["send_prompt", "stream_events", "resolve_approval"] {
+            assert!(
+                manifest
+                    .functions
+                    .iter()
+                    .any(|function| function.id == format!("{name}::{suffix}")),
+                "missing {name}::{suffix}"
+            );
+        }
+    }
+
+    assert_eq!(
+        hermes_agent_worker_manifest().functions[0].request_schema["required"],
+        serde_json::json!(["profile", "prompt", "workspace"]),
+        "Hermes keeps profile required because the CLI profile selects isolated credentials/config"
+    );
 }
 
 #[test]

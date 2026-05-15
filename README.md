@@ -9,7 +9,7 @@ The goal is not to be another thin agent wrapper. OpenView is a product and runt
 OpenView is a small orchestrator with a large systems shape:
 
 - **Rust core** for manifests, registry, graph compilation, run state, approvals, sandbox policy, and backend messages.
-- **Worker catalog** for approval, shell sandbox, turn orchestration, model routing, policy, storage, state, streams, budgets, hooks, credentials, MCP, terminals, and worktrees.
+- **Worker catalog** for approval, shell sandbox, turn orchestration, model routing, policy, storage, state, streams, budgets, hooks, credentials, MCP, terminals, worktrees, and agent CLI runners such as Codex, Claude Code, Hermes, and OpenCode.
 - **Backend-compatible protocol boundary** that can register workers, functions, and triggers without vendoring another engine.
 - **iii primitive adapter target** for queue-backed tasks, database transactions, event streams, approvals, session history, shell sandbox execution, and harness-backed UI/event streaming.
 - **CLI** for inspecting worker manifests and running local demos.
@@ -78,6 +78,44 @@ OpenView does not treat workers as generic labels. A worker manifest declares th
 - `PolicySet` — denylist and capability policy.
 - `Terminal` — interactive command sessions.
 - `GitWorktree` — branch/worktree scoped agent work.
+
+## Agent runner workers
+
+OpenView now models local coding agents as first-class workers instead of loose
+commands in a text box:
+
+| Worker | Local binary | Role |
+|---|---|---|
+| `codex.agent` | `codex` | Non-interactive Codex CLI runs in isolated worktrees. |
+| `claude-code.agent` | `claude` | Claude Code print-mode sessions in isolated worktrees. |
+| `hermes.agent` | `hermes` | Hermes profile/session runs with skills, toolsets, approvals, and events. |
+| `opencode.agent` | `opencode` | OpenCode runs in isolated worktrees. |
+
+These workers depend on `git.worktree`, `shell.sandbox`, and `approval.gate`.
+AgentView should create or select a worktree, launch the selected agent worker,
+stream normalized events, and show the session next to other active agents.
+This is the Orca/Conductor-style surface: several agents, each with its own
+workspace/worktree, tracked in one control plane.
+
+The iii substrate still installs through `iii worker add`:
+
+```bash
+iii worker add shell
+iii worker add approval-gate
+iii worker add session-tree
+iii worker add subagent
+iii worker add harness
+```
+
+The agent runner binaries are local CLI tools referenced by those worker
+manifests. Verify the catalog contracts with:
+
+```bash
+cargo run -p openview-cli -- manifest codex.agent
+cargo run -p openview-cli -- manifest claude-code.agent
+cargo run -p openview-cli -- manifest hermes.agent
+cargo run -p openview-cli -- manifest opencode.agent
+```
 
 ## Sandbox and permission model
 

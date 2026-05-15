@@ -1,4 +1,7 @@
-use openview_worker::{HermesApprovalPolicy, HermesSessionRequest};
+use openview_worker::{
+    AgentCliApprovalPolicy, AgentCliKind, AgentCliSessionRequest, HermesApprovalPolicy,
+    HermesSessionRequest,
+};
 
 #[test]
 fn hermes_session_request_builds_deterministic_command_invocation() {
@@ -106,5 +109,133 @@ fn hermes_command_invocation_serializes_only_secret_free_contract_fields() {
     assert!(
         value.get("environment").is_none(),
         "contract must not serialize secret-bearing env maps"
+    );
+}
+
+#[test]
+fn codex_agent_cli_invocation_runs_exec_in_the_assigned_worktree() {
+    let invocation = AgentCliSessionRequest::new(
+        AgentCliKind::Codex,
+        "/repo/.openview-worktrees/codex-a",
+        "build the dashboard and run tests",
+    )
+    .model("gpt-5.5")
+    .profile("xhigh")
+    .command_invocation();
+
+    assert_eq!(invocation.worker_id, "codex.agent");
+    assert_eq!(invocation.binary, "codex");
+    assert_eq!(
+        invocation.working_directory.as_deref(),
+        Some("/repo/.openview-worktrees/codex-a")
+    );
+    assert_eq!(
+        invocation.argv,
+        vec![
+            "exec",
+            "--cd",
+            "/repo/.openview-worktrees/codex-a",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+            "--json",
+            "--model",
+            "gpt-5.5",
+            "--profile",
+            "xhigh",
+            "build the dashboard and run tests",
+        ]
+    );
+    assert_eq!(invocation.env_keys, vec!["CODEX_HOME", "OPENAI_API_KEY"]);
+}
+
+#[test]
+fn claude_code_agent_cli_invocation_uses_print_mode_without_secret_values() {
+    let invocation = AgentCliSessionRequest::new(
+        AgentCliKind::ClaudeCode,
+        "/repo/.openview-worktrees/claude-a",
+        "review the queue recovery path",
+    )
+    .model("claude-opus-4-7")
+    .approval_policy(AgentCliApprovalPolicy::Yolo)
+    .command_invocation();
+
+    assert_eq!(invocation.worker_id, "claude-code.agent");
+    assert_eq!(invocation.binary, "claude");
+    assert_eq!(
+        invocation.argv,
+        vec![
+            "--model",
+            "claude-opus-4-7",
+            "--output-format",
+            "stream-json",
+            "--dangerously-skip-permissions",
+            "-p",
+            "review the queue recovery path",
+        ]
+    );
+    assert_eq!(
+        invocation.env_keys,
+        vec!["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"]
+    );
+    let value = serde_json::to_value(&invocation).expect("invocation serializes");
+    assert!(value.get("env").is_none());
+    assert!(value.get("environment").is_none());
+}
+
+#[test]
+fn hermes_and_opencode_generic_agent_invocations_share_agentview_contract() {
+    let hermes = AgentCliSessionRequest::new(
+        AgentCliKind::Hermes,
+        "/repo/.openview-worktrees/hermes-a",
+        "work kanban task t_123",
+    )
+    .profile("builder")
+    .session_id("hermes-session-1")
+    .skill("kanban-worker")
+    .toolset("terminal")
+    .command_invocation();
+
+    assert_eq!(hermes.worker_id, "hermes.agent");
+    assert_eq!(hermes.binary, "hermes");
+    assert_eq!(
+        hermes.argv,
+        vec![
+            "--profile",
+            "builder",
+            "--resume",
+            "hermes-session-1",
+            "--skills",
+            "kanban-worker",
+            "--toolsets",
+            "terminal",
+            "chat",
+            "--query",
+            "work kanban task t_123",
+        ]
+    );
+
+    let opencode = AgentCliSessionRequest::new(
+        AgentCliKind::OpenCode,
+        "/repo/.openview-worktrees/opencode-a",
+        "implement the file tree",
+    )
+    .model("qwen-coder")
+    .session_id("open-session-1")
+    .command_invocation();
+
+    assert_eq!(opencode.worker_id, "opencode.agent");
+    assert_eq!(opencode.binary, "opencode");
+    assert_eq!(
+        opencode.argv,
+        vec![
+            "run",
+            "--model",
+            "qwen-coder",
+            "--session",
+            "open-session-1",
+            "implement the file tree",
+        ]
     );
 }

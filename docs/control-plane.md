@@ -37,6 +37,11 @@ The current Rust foundation includes:
 - `TraceTimeline` — ordered event stream and function-call lifecycle.
 - `Worktree` — branch/worktree scoped engineering state.
 
+Agent runner panes should be backed by worker manifests, not hard-coded
+product branches. The first runner workers are `codex.agent`,
+`claude-code.agent`, `hermes.agent`, and `opencode.agent`; each owns the same
+session/event/approval contract and runs inside a selected worktree.
+
 ## Why this matters
 
 Without a control plane, agents become invisible background jobs. OpenView should make the system inspectable:
@@ -87,7 +92,8 @@ The control plane should read from OpenView APIs that are backed by an iii adapt
 - `stream::set` writes live run/worker/approval events; `stream::list` replays ordered slices for trace panes.
 - `hook-fanout::publish_collect` fans before/after function-call hooks to policy, approval, budget, and evidence subscribers.
 - `approval::list_pending` and `approval::resolve` back the approval queue pane.
-- `run::start_and_wait` is the adapter target for Hermes agent turns.
+- `run::start_and_wait` is the adapter target for Hermes-compatible agent turns.
+- `git.worktree` plus `shell::exec_bg` launches `codex.agent`, `claude-code.agent`, `hermes.agent`, and `opencode.agent` side-by-side while AgentView tracks each session, worktree, approval queue, and event stream.
 - `session-tree::*` stores transcript/history so a run can be resumed or exported.
 - shell sandbox workers execute scoped commands only after OpenView policy allows them.
 - harness composes the UI/event streaming path for local operator surfaces.

@@ -7,7 +7,8 @@ use openview_core::{
     TodoBlocker, WorkerRuntimeSpec,
 };
 use openview_worker::{
-    approval_worker_manifest, git_worktree_worker_manifest, hermes_agent_worker_manifest,
+    approval_worker_manifest, claude_code_agent_worker_manifest, codex_agent_worker_manifest,
+    git_worktree_worker_manifest, hermes_agent_worker_manifest, opencode_agent_worker_manifest,
     runtime_manifest_json, shell_sandbox_worker_manifest, terminal_pty_worker_manifest,
     OPENVIEW_QUEUE_INDEX_NAMES, OPENVIEW_QUEUE_SCHEMA_BOOTSTRAP_FUNCTION,
     OPENVIEW_QUEUE_SCHEMA_MIGRATION_ID, OPENVIEW_QUEUE_SCHEMA_VERSION, OPENVIEW_QUEUE_TABLE_NAMES,
@@ -142,8 +143,11 @@ fn main() -> Result<()> {
         Command::Manifest { worker } => {
             let manifest = match worker.as_str() {
                 "approval.gate" => approval_worker_manifest(),
+                "codex.agent" => codex_agent_worker_manifest(),
+                "claude-code.agent" => claude_code_agent_worker_manifest(),
                 "git.worktree" => git_worktree_worker_manifest(),
                 "hermes.agent" => hermes_agent_worker_manifest(),
+                "opencode.agent" => opencode_agent_worker_manifest(),
                 "shell.sandbox" => shell_sandbox_worker_manifest(),
                 "terminal.pty" => terminal_pty_worker_manifest(),
                 other => built_in_worker_catalog()

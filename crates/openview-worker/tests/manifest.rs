@@ -1,6 +1,7 @@
 use openview_core::{CapabilityRisk, ResourceKind};
 use openview_worker::{
-    git_worktree_worker_manifest, hermes_agent_worker_manifest, runtime_manifest_json,
+    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
+    hermes_agent_worker_manifest, opencode_agent_worker_manifest, runtime_manifest_json,
     terminal_pty_worker_manifest,
 };
 
@@ -63,4 +64,34 @@ fn worker_crate_exposes_hermes_agent_manifest_contract() {
     assert!(json.contains("hermes.agent::stream_events"));
     assert!(json.contains("hermes.agent::resolve_approval"));
     assert!(json.contains("HERMES_PROFILE"));
+}
+
+#[test]
+fn worker_crate_exposes_codex_claude_and_opencode_agent_manifests() {
+    for (manifest, function_prefix, binary) in [
+        (codex_agent_worker_manifest(), "codex.agent", "codex"),
+        (
+            claude_code_agent_worker_manifest(),
+            "claude-code.agent",
+            "claude",
+        ),
+        (
+            opencode_agent_worker_manifest(),
+            "opencode.agent",
+            "opencode",
+        ),
+    ] {
+        let json = runtime_manifest_json(&manifest).expect("manifest serializes");
+        assert_eq!(manifest.name, function_prefix);
+        assert_eq!(manifest.binary_name.as_deref(), Some(binary));
+        assert!(manifest.resources.contains(&ResourceKind::GitWorktree));
+        assert!(manifest.resources.contains(&ResourceKind::Process));
+        assert!(manifest.resources.contains(&ResourceKind::SessionState));
+        assert!(manifest.resources.contains(&ResourceKind::EventStream));
+        assert!(manifest.dependencies.contains("git.worktree"));
+        assert!(manifest.dependencies.contains("shell.sandbox"));
+        assert!(manifest.dependencies.contains("approval.gate"));
+        assert!(json.contains(&format!("{function_prefix}::spawn_session")));
+        assert!(json.contains(&format!("{function_prefix}::stream_events")));
+    }
 }

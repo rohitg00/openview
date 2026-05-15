@@ -3627,10 +3627,267 @@ impl IiiBackendConfig {
     }
 }
 
-pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
+struct AgentRunnerManifestSpec<'a> {
+    name: &'a str,
+    display_name: &'a str,
+    binary: &'a str,
+    description: &'a str,
+    env_keys: &'a [&'a str],
+    argv_template: &'a [&'a str],
+    profile_required: bool,
+}
+
+fn agent_runner_worker_manifest(spec: AgentRunnerManifestSpec<'_>) -> WorkerManifest {
+    const WORKSPACE_ROOT: &str = "${OPENVIEW_WORKSPACE_ROOT}";
+    const WORKTREE_ROOT: &str = "${OPENVIEW_WORKTREE_ROOT}";
+
+    let required = if spec.profile_required {
+        json!(["profile", "prompt", "workspace"])
+    } else {
+        json!(["prompt", "workspace"])
+    };
+
+    let mut sandbox = SandboxProfile::locked_down()
+        .allow_workspace_read(WORKSPACE_ROOT)
+        .allow_workspace_read(WORKTREE_ROOT)
+        .allow_workspace_write(WORKTREE_ROOT)
+        .allow_command(spec.binary)
+        .allow_network_host("${OPENVIEW_AGENT_PROVIDER_HOST}");
+    for env_key in spec.env_keys {
+        sandbox = sandbox.allow_secret_name(*env_key);
+    }
+
+    let mut manifest = WorkerManifest::new(spec.name, "0.1.0")
+        .description(spec.description)
+        .target(BackendTarget::LocalBinary)
+        .resource(ResourceKind::SessionState)
+        .resource(ResourceKind::EventStream)
+        .resource(ResourceKind::ApprovalQueue)
+        .resource(ResourceKind::GitWorktree)
+        .resource(ResourceKind::Filesystem)
+        .resource(ResourceKind::Process)
+        .resource(ResourceKind::CredentialVault)
+        .resource(ResourceKind::ModelProvider)
+        .dependency("git.worktree")
+        .dependency("shell.sandbox")
+        .dependency("approval.gate")
+        .function(
+            FunctionSpec::new(format!("{}::spawn_session", spec.name), CapabilityRisk::Exec)
+                .description("Start or resume an agent CLI session in a scoped workspace/worktree")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": required,
+                    "properties": {
+                        "workspace": {"type": "string", "description": "Workspace or worktree directory under OpenView control"},
+                        "prompt": {"type": "string", "description": "Initial task instruction"},
+                        "model": {"type": ["string", "null"], "description": "Optional model override for this agent CLI"},
+                        "profile": {"type": ["string", "null"], "description": "Optional CLI profile/config name"},
+                        "session_id": {"type": ["string", "null"], "description": "Optional prior session id to resume"},
+                        "worktree_id": {"type": ["string", "null"], "description": "OpenView worktree binding id"},
+                        "skills": {"type": "array", "items": {"type": "string"}, "default": []},
+                        "toolsets": {"type": "array", "items": {"type": "string"}, "default": []},
+                        "approval_policy": {"type": "string", "enum": ["ask", "never", "yolo"], "default": "ask"},
+                        "json_events": {"type": "boolean", "default": true},
+                        "extra_args": {"type": "array", "items": {"type": "string"}, "default": []}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["agent", "session_id", "started", "event_stream"],
+                    "properties": {
+                        "agent": {"type": "string"},
+                        "session_id": {"type": "string"},
+                        "started": {"type": "boolean"},
+                        "event_stream": {"type": "string"},
+                        "job_id": {"type": ["string", "null"]},
+                        "pid": {"type": ["integer", "null"]},
+                        "worktree_id": {"type": ["string", "null"]},
+                        "approval_queue": {"type": ["string", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true)
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new(format!("{}::send_prompt", spec.name), CapabilityRisk::State)
+                .description("Send a follow-up prompt to an existing agent CLI session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "prompt"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "prompt": {"type": "string"},
+                        "approval_policy": {"type": "string", "enum": ["ask", "never", "yolo"], "default": "ask"}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "accepted"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "accepted": {"type": "boolean"},
+                        "event_stream": {"type": ["string", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true)
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new(format!("{}::stream_events", spec.name), CapabilityRisk::Read)
+                .description("Read normalized event output for an agent CLI session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "after_sequence": {"type": "integer", "minimum": 0, "default": 0},
+                        "limit": {"type": "integer", "minimum": 1, "default": 100}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "events", "next_after_sequence"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "events": {"type": "array", "items": {"type": "object"}},
+                        "next_after_sequence": {"type": "integer", "minimum": 0},
+                        "has_more": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new(format!("{}::resolve_approval", spec.name), CapabilityRisk::Approval)
+                .description("Approve or deny a pending tool approval for an agent CLI session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "approval_id", "approved"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "approval_id": {"type": "string"},
+                        "approved": {"type": "boolean"},
+                        "reason": {"type": ["string", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "approval_id", "resolved"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "approval_id": {"type": "string"},
+                        "resolved": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .sandbox(sandbox);
+
+    manifest.display_name = spec.display_name.to_string();
+    manifest.binary_name = Some(spec.binary.to_string());
+    manifest.language = "local_cli".to_string();
+    manifest.deploy_kind = "local_cli".to_string();
+    manifest.default_config = json!({
+        "binary": spec.binary,
+        "argv_template": spec.argv_template,
+        "env_keys": spec.env_keys,
+        "event_stream": format!("openview.worker.{}.events", spec.name),
+        "approval_queue": format!("openview.worker.{}.approvals", spec.name),
+        "launch_strategy": "git.worktree + shell.sandbox exec_bg",
+        "default_approval_policy": "ask"
+    });
+    manifest
+}
+
+pub fn codex_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "codex.agent",
+        display_name: "Codex",
+        binary: "codex",
+        description: "Codex CLI runner for scoped non-interactive coding sessions in worktrees",
+        env_keys: &["CODEX_HOME", "OPENAI_API_KEY"],
+        argv_template: &[
+            "exec",
+            "--cd",
+            "${workspace}",
+            "--sandbox",
+            "workspace-write",
+            "--ask-for-approval",
+            "on-request",
+            "--json",
+            "${prompt}",
+        ],
+        profile_required: false,
+    })
+}
+
+pub fn claude_code_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "claude-code.agent",
+        display_name: "Claude Code",
+        binary: "claude",
+        description: "Claude Code CLI runner for scoped coding sessions in worktrees",
+        env_keys: &["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
+        argv_template: &["-p", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn hermes_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "hermes.agent",
+        display_name: "Hermes Agent",
+        binary: "hermes",
+        description: "Hermes Agent session lifecycle, prompt delivery, event streaming, and approval resolution",
+        env_keys: &["HERMES_HOME", "HERMES_PROFILE"],
+        argv_template: &[
+            "--profile",
+            "${profile}",
+            "chat",
+            "--query",
+            "${prompt}",
+            "--source",
+            "openview-worker",
+        ],
+        profile_required: true,
+    })
+}
+
+pub fn opencode_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "opencode.agent",
+        display_name: "OpenCode",
+        binary: "opencode",
+        description: "OpenCode CLI runner for scoped coding sessions in worktrees",
+        env_keys: &["OPENCODE_HOME", "OPENCODE_API_KEY"],
+        argv_template: &["run", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn agent_runner_worker_manifests() -> Vec<WorkerManifest> {
     vec![
+        codex_agent_worker_manifest(),
+        claude_code_agent_worker_manifest(),
+        hermes_agent_worker_manifest(),
+        opencode_agent_worker_manifest(),
+    ]
+}
+
+pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
+    let mut workers = vec![
         git_worktree_worker_manifest(),
         terminal_pty_worker_manifest(),
+    ];
+    workers.extend(agent_runner_worker_manifests());
+    workers.extend([
         WorkerManifest::new("approval.gate", "0.1.0")
             .description("Human approval queue for risky agent actions")
             .resource(ResourceKind::ApprovalQueue)
@@ -3674,7 +3931,8 @@ pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
             .description("Artifact and object storage worker")
             .resource(ResourceKind::ObjectStorage)
             .function(FunctionSpec::new("storage::put", CapabilityRisk::Write)),
-    ]
+    ]);
+    workers
 }
 
 pub fn terminal_pty_worker_manifest() -> WorkerManifest {

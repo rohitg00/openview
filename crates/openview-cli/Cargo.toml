@@ -1,0 +1,19 @@
+[package]
+name = "openview-cli"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "OpenView command line interface."
+
+[[bin]]
+name = "openview"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+openview-core = { path = "../openview-core" }
+openview-worker = { path = "../openview-worker" }
+serde_json.workspace = true

@@ -15,14 +15,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-      - name: Setup Node
-        uses: actions/setup-node@v6
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: 22
-          cache: npm
-      - name: Install
-        run: npm ci
-      - name: Typecheck, test, and copy guard
-        run: |
-          npm run check
-          npm run lint:copy
+          components: clippy, rustfmt
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Public copy guard
+        run: scripts/check_public_copy.sh

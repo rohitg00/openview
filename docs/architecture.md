@@ -1,84 +1,74 @@
 # OpenView Architecture
 
-OpenView is an orchestration layer with a local-first core and a backend-ready boundary.
+OpenView is a Rust-first agent-worker orchestrator. It is designed around explicit resources, explicit capabilities, and explicit backend boundaries.
 
-## Goals
+## Layers
 
-1. Compose many agents without forcing them into one giant prompt.
-2. Keep execution narrow: agents decide, workers execute, tools expose capabilities.
-3. Make side effects explicit through permissions and approvals.
-4. Make every run observable through structured events.
-5. Keep backend integration small enough to map to a 3i-compatible engine.
+### 1. Agent graph
 
-## Runtime layers
+An agent graph describes who decides, who executes, who reviews, and where approvals happen. The graph compiles into required workers, handoff edges, shared resources, and execution mode.
 
-### 1. Registry
+### 2. Worker registry
 
-The registry stores agents, workers, and tools.
+The registry stores worker manifests. Each manifest declares:
 
-- Agents define behavior and permissions.
-- Workers define capabilities, schemas, health, runtime, side effects, and operational hints.
-- Tools bind a worker capability to a callable interface.
+- worker identity and version;
+- Rust binary deployment metadata;
+- backend targets;
+- functions and trigger specs;
+- resources;
+- dependencies;
+- default config;
+- security policy;
+- sandbox profile.
 
-### 2. Run engine
+### 3. Run state machine
 
-The local run engine executes a list of agents sequentially today. The model is deliberately simple so it can be extended into graphs, fan-out/fan-in, loops, and human steering.
+Runs move through phases:
 
-Each run stores:
+- queued
+- provisioning
+- running
+- waiting for approval
+- function calling
+- streaming
+- completed
+- failed
+- cancelled
 
-- stable `run.id`;
-- goal and input;
-- mutable state;
-- output;
-- steps;
-- approvals;
-- event timeline.
+The foundation implementation includes approval blocking and resume. The next implementation step is durable step persistence and replay.
 
-### 3. Approval layer
+### 4. Event stream
 
-Permissions are checked before each agent step. Any permission with `approval: "required"` blocks the run and creates an approval request.
+Every run emits ordered events. This becomes the transport for a future dashboard, CLI watch mode, mobile approval surface, and backend stream bridge.
 
-A blocked run can be resumed with `approveAndResume(runId, approvalId, reason)`.
+### 5. Backend boundary
 
-### 4. Event layer
+OpenView emits worker/function/trigger registration messages. It does not vendor backend internals. The backend can provide process supervision, WebSocket transport, queueing, retry, state, stream groups, and observability.
 
-Events are monotonic and cursor-friendly. UI and backend streams can resume from a cursor using `eventsAfter(runId, cursor)`.
+## Worker connection patterns
 
-Important event types:
+### Approval-protected shell worker
 
-- `run.started`
-- `agent.started`
-- `agent.message`
-- `approval.requested`
-- `approval.approved`
-- `run.blocked`
-- `agent.completed`
-- `run.completed`
-- `run.failed`
-
-### 5. Backend adapter
-
-The backend adapter is intentionally narrow:
-
-```ts
-interface FunctionBackend {
-  registerWorker(worker): Promise<void>;
-  startRun(input): Promise<{ runId: string }>;
-  waitForRun(runId): Promise<RunRecord>;
-}
+```text
+agent -> policy.guard -> approval.gate -> shell.sandbox -> event stream
 ```
 
-A 3i-compatible backend can own durability, worker registration, queues, function invocation, and run streams while OpenView keeps the user-facing model stable.
+### Durable agent turn
 
-## Extension points
+```text
+run.start -> turn.orchestrator -> models.router -> function call hooks -> storage/session state
+```
 
-Future extension points should not break the core primitives:
+### Review loop
 
-- graph execution plans;
-- run cancellation;
-- artifact store;
-- trace exporters;
-- worker manifests;
-- policy evaluator;
-- dashboard stream transport;
-- backend-owned resume/replay.
+```text
+commit event -> repo worker -> planner -> builder -> reviewer -> CI worker -> hardening report
+```
+
+## Non-goals for the foundation
+
+- No copied runtime code from private references.
+- No direct changes to external backend or worker repositories.
+- No hidden network/process access.
+- No default write permissions.

@@ -946,6 +946,7 @@ impl OpenViewRuntime {
 pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
     vec![
         git_worktree_worker_manifest(),
+        terminal_pty_worker_manifest(),
         WorkerManifest::new("approval.gate", "0.1.0")
             .description("Human approval queue for risky agent actions")
             .resource(ResourceKind::ApprovalQueue)
@@ -990,6 +991,162 @@ pub fn built_in_worker_catalog() -> Vec<WorkerManifest> {
             .resource(ResourceKind::ObjectStorage)
             .function(FunctionSpec::new("storage::put", CapabilityRisk::Write)),
     ]
+}
+
+pub fn terminal_pty_worker_manifest() -> WorkerManifest {
+    const WORKSPACE_ROOT: &str = "${OPENVIEW_WORKSPACE_ROOT}";
+    const SAFE_SHELL: &str = "${OPENVIEW_SAFE_SHELL}";
+    const SAFE_AGENT_CLI: &str = "${OPENVIEW_SAFE_AGENT_CLI}";
+
+    WorkerManifest::new("terminal.pty", "0.1.0")
+        .description("Pseudo-terminal session lifecycle, input, output, resize, and teardown")
+        .target(BackendTarget::LocalBinary)
+        .resource(ResourceKind::Terminal)
+        .resource(ResourceKind::Process)
+        .resource(ResourceKind::EventStream)
+        .resource(ResourceKind::Filesystem)
+        .function(
+            FunctionSpec::new("terminal.pty::spawn", CapabilityRisk::Exec)
+                .description("Spawn an approved pseudo-terminal session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["command"],
+                    "properties": {
+                        "command": {"type": "string", "description": "Configured shell or safe CLI command placeholder"},
+                        "args": {"type": "array", "items": {"type": "string"}, "default": []},
+                        "cwd": {"type": ["string", "null"], "description": "Working directory under the workspace root"},
+                        "env": {"type": "object", "additionalProperties": {"type": "string"}, "default": {}},
+                        "cols": {"type": "integer", "minimum": 1, "default": 80},
+                        "rows": {"type": "integer", "minimum": 1, "default": 24}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "pid", "started"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "pid": {"type": ["integer", "null"]},
+                        "started": {"type": "boolean"},
+                        "event_stream": {"type": ["string", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true)
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("terminal.pty::write", CapabilityRisk::Exec)
+                .description("Write input bytes to an approved pseudo-terminal session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "data"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "data": {"type": "string", "description": "UTF-8 input to send to the terminal"},
+                        "append_newline": {"type": "boolean", "default": false}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "accepted"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "accepted": {"type": "boolean"},
+                        "bytes_written": {"type": "integer", "minimum": 0}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true)
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("terminal.pty::read", CapabilityRisk::Read)
+                .description("Read buffered output from a pseudo-terminal session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "cursor": {"type": ["integer", "null"], "minimum": 0},
+                        "max_bytes": {"type": "integer", "minimum": 1, "default": 65536}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "output", "cursor", "eof"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "output": {"type": "string"},
+                        "cursor": {"type": "integer", "minimum": 0},
+                        "eof": {"type": "boolean"},
+                        "exit_status": {"type": ["integer", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("terminal.pty::resize", CapabilityRisk::State)
+                .description("Resize an existing pseudo-terminal session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "cols", "rows"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "cols": {"type": "integer", "minimum": 1},
+                        "rows": {"type": "integer", "minimum": 1}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "cols", "rows", "resized"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "cols": {"type": "integer", "minimum": 1},
+                        "rows": {"type": "integer", "minimum": 1},
+                        "resized": {"type": "boolean"}
+                    },
+                    "additionalProperties": false
+                }))
+                .visibility(FunctionVisibility::Ui),
+        )
+        .function(
+            FunctionSpec::new("terminal.pty::kill", CapabilityRisk::Exec)
+                .description("Terminate a pseudo-terminal session")
+                .request_schema(json!({
+                    "type": "object",
+                    "required": ["session_id"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "signal": {"type": "string", "default": "TERM"}
+                    },
+                    "additionalProperties": false
+                }))
+                .response_schema(json!({
+                    "type": "object",
+                    "required": ["session_id", "terminated"],
+                    "properties": {
+                        "session_id": {"type": "string"},
+                        "terminated": {"type": "boolean"},
+                        "exit_status": {"type": ["integer", "null"]}
+                    },
+                    "additionalProperties": false
+                }))
+                .approval_required(true)
+                .visibility(FunctionVisibility::Ui),
+        )
+        .sandbox(
+            SandboxProfile::locked_down()
+                .allow_workspace_read(WORKSPACE_ROOT)
+                .allow_workspace_write(WORKSPACE_ROOT)
+                .allow_command(SAFE_SHELL)
+                .allow_command(SAFE_AGENT_CLI)
+                .deny_network(),
+        )
 }
 
 pub fn git_worktree_worker_manifest() -> WorkerManifest {

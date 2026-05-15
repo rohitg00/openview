@@ -1,7 +1,8 @@
 use openview_core::{
-    git_worktree_worker_manifest, AgentBlueprint, BackendTarget, CapabilityRisk, ConnectionGraph,
-    ExecutionMode, FunctionSpec, FunctionVisibility, OpenViewRuntime, PermissionPolicy,
-    ResourceKind, RunPhase, SandboxProfile, TriggerSpec, WorkerManifest,
+    git_worktree_worker_manifest, terminal_pty_worker_manifest, AgentBlueprint, BackendTarget,
+    CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec, FunctionVisibility,
+    OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile, TriggerSpec,
+    WorkerManifest,
 };
 
 #[test]
@@ -13,6 +14,95 @@ fn built_in_catalog_contains_first_class_git_worktree_worker() {
         .expect("git.worktree is registered in the built-in catalog");
 
     assert_eq!(manifest, &git_worktree_worker_manifest());
+}
+
+#[test]
+fn built_in_catalog_contains_first_class_terminal_pty_worker() {
+    let catalog = openview_core::built_in_worker_catalog();
+    let manifest = catalog
+        .iter()
+        .find(|worker| worker.name == "terminal.pty")
+        .expect("terminal.pty is registered in the built-in catalog");
+
+    assert_eq!(manifest, &terminal_pty_worker_manifest());
+}
+
+#[test]
+fn terminal_pty_manifest_declares_locked_down_contract() {
+    let manifest = terminal_pty_worker_manifest();
+
+    assert_eq!(manifest.name, "terminal.pty");
+    assert!(manifest.targets.contains(&BackendTarget::LocalBinary));
+    assert!(manifest.resources.contains(&ResourceKind::Terminal));
+    assert!(manifest.resources.contains(&ResourceKind::Process));
+    assert!(manifest.resources.contains(&ResourceKind::EventStream));
+    assert!(manifest.resources.contains(&ResourceKind::Filesystem));
+
+    let sandbox = manifest.sandbox.as_ref().expect("sandbox declared");
+    assert_eq!(sandbox.name, "locked-down");
+    assert!(sandbox
+        .filesystem
+        .read_roots
+        .contains("${OPENVIEW_WORKSPACE_ROOT}"));
+    assert!(sandbox
+        .filesystem
+        .write_roots
+        .contains("${OPENVIEW_WORKSPACE_ROOT}"));
+    assert!(!sandbox.network.allow);
+    assert!(sandbox.process.allow_exec);
+    assert!(sandbox
+        .process
+        .allowed_commands
+        .contains("${OPENVIEW_SAFE_SHELL}"));
+    assert!(sandbox
+        .process
+        .allowed_commands
+        .contains("${OPENVIEW_SAFE_AGENT_CLI}"));
+
+    let function = |id: &str| {
+        manifest
+            .functions
+            .iter()
+            .find(|function| function.id == id)
+            .unwrap_or_else(|| panic!("missing function {id}"))
+    };
+
+    let spawn = function("terminal.pty::spawn");
+    assert_eq!(spawn.risk, CapabilityRisk::Exec);
+    assert!(spawn.approval_required);
+    assert_eq!(spawn.request_schema["required"][0], "command");
+    assert_eq!(spawn.response_schema["required"][0], "session_id");
+
+    let write = function("terminal.pty::write");
+    assert_eq!(write.risk, CapabilityRisk::Exec);
+    assert!(write.approval_required);
+
+    let read = function("terminal.pty::read");
+    assert_eq!(read.risk, CapabilityRisk::Read);
+    assert!(!read.approval_required);
+
+    let resize = function("terminal.pty::resize");
+    assert_eq!(resize.risk, CapabilityRisk::State);
+    assert!(!resize.approval_required);
+
+    let kill = function("terminal.pty::kill");
+    assert_eq!(kill.risk, CapabilityRisk::Exec);
+    assert!(kill.approval_required);
+
+    for id in [
+        "terminal.pty::spawn",
+        "terminal.pty::write",
+        "terminal.pty::kill",
+    ] {
+        assert!(manifest.security.approval_required_functions.contains(id));
+    }
+
+    for function in &manifest.functions {
+        assert_eq!(function.request_schema["type"], "object");
+        assert!(function.request_schema.get("properties").is_some());
+        assert_eq!(function.response_schema["type"], "object");
+        assert!(function.response_schema.get("properties").is_some());
+    }
 }
 
 #[test]

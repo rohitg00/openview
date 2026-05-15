@@ -3,7 +3,7 @@ use clap::{Parser, Subcommand};
 use openview_core::{built_in_worker_catalog, ConnectionGraph, OpenViewRuntime, ResourceKind};
 use openview_worker::{
     approval_worker_manifest, git_worktree_worker_manifest, runtime_manifest_json,
-    shell_sandbox_worker_manifest,
+    shell_sandbox_worker_manifest, terminal_pty_worker_manifest,
 };
 
 #[derive(Debug, Parser)]
@@ -38,9 +38,10 @@ fn main() -> Result<()> {
             runtime.register_worker(approval_worker_manifest())?;
             runtime.register_worker(shell_sandbox_worker_manifest())?;
             runtime.register_worker(git_worktree_worker_manifest())?;
+            runtime.register_worker(terminal_pty_worker_manifest())?;
             let run = runtime.start_run(
-                "inspect git worktrees and prepare a scoped branch",
-                ["git.worktree"],
+                "prepare an interactive terminal session for safe review",
+                ["terminal.pty"],
             )?;
             println!("{}", serde_json::to_string_pretty(&run)?);
         }
@@ -49,6 +50,7 @@ fn main() -> Result<()> {
                 "approval.gate" => approval_worker_manifest(),
                 "git.worktree" => git_worktree_worker_manifest(),
                 "shell.sandbox" => shell_sandbox_worker_manifest(),
+                "terminal.pty" => terminal_pty_worker_manifest(),
                 other => built_in_worker_catalog()
                     .into_iter()
                     .find(|candidate| candidate.name == other)

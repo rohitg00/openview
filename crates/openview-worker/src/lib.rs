@@ -1,6 +1,9 @@
 pub use openview_core::{
-    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
-    hermes_agent_worker_manifest, opencode_agent_worker_manifest, terminal_pty_worker_manifest,
+    aider_agent_worker_manifest, amp_agent_worker_manifest, claude_code_agent_worker_manifest,
+    codex_agent_worker_manifest, crush_agent_worker_manifest, cursor_agent_worker_manifest,
+    gemini_cli_agent_worker_manifest, git_worktree_worker_manifest, goose_agent_worker_manifest,
+    hermes_agent_worker_manifest, openclaw_agent_worker_manifest, opencode_agent_worker_manifest,
+    openhands_agent_worker_manifest, qwen_code_agent_worker_manifest, terminal_pty_worker_manifest,
 };
 use openview_core::{
     BackendTarget, CapabilityRisk, FunctionSpec, FunctionVisibility, ResourceKind, WorkerManifest,
@@ -152,6 +155,17 @@ pub enum AgentCliKind {
     ClaudeCode,
     Hermes,
     OpenCode,
+    #[serde(rename = "openclaw")]
+    OpenClaw,
+    GeminiCli,
+    Goose,
+    Aider,
+    #[serde(rename = "openhands")]
+    OpenHands,
+    Crush,
+    QwenCode,
+    CursorAgent,
+    Amp,
 }
 
 impl AgentCliKind {
@@ -161,6 +175,15 @@ impl AgentCliKind {
             Self::ClaudeCode => "claude-code.agent",
             Self::Hermes => "hermes.agent",
             Self::OpenCode => "opencode.agent",
+            Self::OpenClaw => "openclaw.agent",
+            Self::GeminiCli => "gemini-cli.agent",
+            Self::Goose => "goose.agent",
+            Self::Aider => "aider.agent",
+            Self::OpenHands => "openhands.agent",
+            Self::Crush => "crush.agent",
+            Self::QwenCode => "qwen-code.agent",
+            Self::CursorAgent => "cursor-agent.agent",
+            Self::Amp => "amp.agent",
         }
     }
 
@@ -170,19 +193,74 @@ impl AgentCliKind {
             Self::ClaudeCode => "claude",
             Self::Hermes => "hermes",
             Self::OpenCode => "opencode",
+            Self::OpenClaw => "openclaw",
+            Self::GeminiCli => "gemini",
+            Self::Goose => "goose",
+            Self::Aider => "aider",
+            Self::OpenHands => "openhands",
+            Self::Crush => "crush",
+            Self::QwenCode => "qwen",
+            Self::CursorAgent => "cursor-agent",
+            Self::Amp => "amp",
         }
     }
 
     pub fn env_keys(self) -> Vec<String> {
+        let keys: &[&str] = match self {
+            Self::Codex => &["CODEX_HOME", "OPENAI_API_KEY"],
+            Self::ClaudeCode => &["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
+            Self::Hermes => &["HERMES_HOME", "HERMES_PROFILE"],
+            Self::OpenCode => &["OPENCODE_HOME", "OPENCODE_API_KEY"],
+            Self::OpenClaw => &[
+                "OPENCLAW_HOME",
+                "OPENCLAW_PROFILE",
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+            ],
+            Self::GeminiCli => &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_CLI_HOME"],
+            Self::Goose => &[
+                "GOOSE_CONFIG_DIR",
+                "GOOSE_PROVIDER",
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+            ],
+            Self::Aider => &["AIDER_ENV_FILE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+            Self::OpenHands => &[
+                "OPENHANDS_CONFIG_DIR",
+                "LLM_API_KEY",
+                "LLM_MODEL",
+                "LLM_BASE_URL",
+            ],
+            Self::Crush => &[
+                "CRUSH_CONFIG_DIR",
+                "ANTHROPIC_API_KEY",
+                "OPENAI_API_KEY",
+                "GEMINI_API_KEY",
+            ],
+            Self::QwenCode => &["DASHSCOPE_API_KEY", "OPENAI_API_KEY", "QWEN_CODE_HOME"],
+            Self::CursorAgent => &["CURSOR_API_KEY", "CURSOR_CONFIG_DIR"],
+            Self::Amp => &["AMP_API_KEY", "AMP_SETTINGS_FILE"],
+        };
+
+        keys.iter().copied().map(str::to_string).collect()
+    }
+
+    pub fn display_name(self) -> &'static str {
         match self {
-            Self::Codex => ["CODEX_HOME", "OPENAI_API_KEY"],
-            Self::ClaudeCode => ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG_DIR"],
-            Self::Hermes => ["HERMES_HOME", "HERMES_PROFILE"],
-            Self::OpenCode => ["OPENCODE_HOME", "OPENCODE_API_KEY"],
+            Self::Codex => "Codex",
+            Self::ClaudeCode => "Claude Code",
+            Self::Hermes => "Hermes Agent",
+            Self::OpenCode => "OpenCode",
+            Self::OpenClaw => "OpenClaw",
+            Self::GeminiCli => "Gemini CLI",
+            Self::Goose => "Goose",
+            Self::Aider => "Aider",
+            Self::OpenHands => "OpenHands",
+            Self::Crush => "Crush",
+            Self::QwenCode => "Qwen Code",
+            Self::CursorAgent => "Cursor Agent",
+            Self::Amp => "Amp",
         }
-        .into_iter()
-        .map(str::to_string)
-        .collect()
     }
 }
 
@@ -277,6 +355,15 @@ impl AgentCliSessionRequest {
             AgentCliKind::ClaudeCode => self.claude_code_argv(),
             AgentCliKind::Hermes => self.hermes_argv(),
             AgentCliKind::OpenCode => self.opencode_argv(),
+            AgentCliKind::OpenClaw => self.openclaw_argv(),
+            AgentCliKind::GeminiCli => self.prompt_flag_argv("-p"),
+            AgentCliKind::Goose => self.goose_argv(),
+            AgentCliKind::Aider => self.aider_argv(),
+            AgentCliKind::OpenHands => self.openhands_argv(),
+            AgentCliKind::Crush => self.crush_argv(),
+            AgentCliKind::QwenCode => self.prompt_flag_argv("-p"),
+            AgentCliKind::CursorAgent => self.cursor_agent_argv(),
+            AgentCliKind::Amp => self.amp_argv(),
         };
         argv.extend(self.extra_args.clone());
 
@@ -399,6 +486,141 @@ impl AgentCliSessionRequest {
         }
         argv.push(self.prompt.clone());
         argv
+    }
+
+    fn openclaw_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        if let Some(profile) = &self.profile {
+            argv.push("--profile".to_string());
+            argv.push(profile.clone());
+        }
+        argv.push("agent".to_string());
+        if self.json_events {
+            argv.push("--json".to_string());
+        }
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if let Some(session_id) = &self.session_id {
+            argv.push("--session-id".to_string());
+            argv.push(session_id.clone());
+        }
+        if self.approval_policy == AgentCliApprovalPolicy::Yolo {
+            argv.push("--local".to_string());
+        }
+        argv.push("--message".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn goose_argv(&self) -> Vec<String> {
+        if self.wants_acp() {
+            return vec!["acp".to_string()];
+        }
+
+        let mut argv = vec!["run".to_string()];
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        argv.push("-t".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn aider_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        self.push_model_profile_flags(&mut argv);
+        if self.approval_policy == AgentCliApprovalPolicy::Yolo {
+            argv.push("--yes-always".to_string());
+        }
+        argv.push("--message".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn openhands_argv(&self) -> Vec<String> {
+        if self.wants_acp() {
+            return vec!["acp".to_string()];
+        }
+
+        let mut argv = vec!["--headless".to_string()];
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        argv.push("-t".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn crush_argv(&self) -> Vec<String> {
+        let mut argv = vec!["run".to_string()];
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--session".to_string());
+            argv.push(session_id.clone());
+        }
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn cursor_agent_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        if self.json_events {
+            argv.push("--output-format".to_string());
+            argv.push("json".to_string());
+        }
+        argv.push("-p".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn amp_argv(&self) -> Vec<String> {
+        let mut argv = Vec::new();
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        argv.push("--execute".to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn prompt_flag_argv(&self, prompt_flag: &str) -> Vec<String> {
+        let mut argv = Vec::new();
+        self.push_model_profile_flags(&mut argv);
+        if let Some(session_id) = &self.session_id {
+            argv.push("--resume".to_string());
+            argv.push(session_id.clone());
+        }
+        argv.push(prompt_flag.to_string());
+        argv.push(self.prompt.clone());
+        argv
+    }
+
+    fn push_model_profile_flags(&self, argv: &mut Vec<String>) {
+        if let Some(model) = &self.model {
+            argv.push("--model".to_string());
+            argv.push(model.clone());
+        }
+        if let Some(profile) = &self.profile {
+            argv.push("--profile".to_string());
+            argv.push(profile.clone());
+        }
+    }
+
+    fn wants_acp(&self) -> bool {
+        self.toolsets.iter().any(|toolset| toolset == "acp")
     }
 }
 

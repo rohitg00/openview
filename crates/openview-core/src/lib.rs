@@ -3872,12 +3872,157 @@ pub fn opencode_agent_worker_manifest() -> WorkerManifest {
     })
 }
 
+pub fn openclaw_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "openclaw.agent",
+        display_name: "OpenClaw",
+        binary: "openclaw",
+        description: "OpenClaw CLI runner for scoped agent sessions in worktrees",
+        env_keys: &[
+            "OPENCLAW_HOME",
+            "OPENCLAW_PROFILE",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+        ],
+        argv_template: &[
+            "--profile",
+            "${profile}",
+            "agent",
+            "--json",
+            "--message",
+            "${prompt}",
+        ],
+        profile_required: true,
+    })
+}
+
+pub fn gemini_cli_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "gemini-cli.agent",
+        display_name: "Gemini CLI",
+        binary: "gemini",
+        description: "Gemini CLI runner for scoped non-interactive coding sessions in worktrees",
+        env_keys: &["GEMINI_API_KEY", "GOOGLE_API_KEY", "GEMINI_CLI_HOME"],
+        argv_template: &["-p", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn goose_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "goose.agent",
+        display_name: "Goose",
+        binary: "goose",
+        description: "Goose CLI runner for scoped coding sessions in worktrees",
+        env_keys: &[
+            "GOOSE_CONFIG_DIR",
+            "GOOSE_PROVIDER",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+        ],
+        argv_template: &["run", "-t", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn aider_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "aider.agent",
+        display_name: "Aider",
+        binary: "aider",
+        description: "Aider CLI runner for scoped pair-programming sessions in worktrees",
+        env_keys: &["AIDER_ENV_FILE", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+        argv_template: &["--message", "${prompt}", "--yes-always"],
+        profile_required: false,
+    })
+}
+
+pub fn openhands_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "openhands.agent",
+        display_name: "OpenHands",
+        binary: "openhands",
+        description: "OpenHands CLI runner for scoped headless coding sessions in worktrees",
+        env_keys: &[
+            "OPENHANDS_CONFIG_DIR",
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+        ],
+        argv_template: &["--headless", "-t", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn crush_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "crush.agent",
+        display_name: "Crush",
+        binary: "crush",
+        description: "Crush CLI runner for scoped non-interactive coding sessions in worktrees",
+        env_keys: &[
+            "CRUSH_CONFIG_DIR",
+            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
+            "GEMINI_API_KEY",
+        ],
+        argv_template: &["run", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn qwen_code_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "qwen-code.agent",
+        display_name: "Qwen Code",
+        binary: "qwen",
+        description: "Qwen Code CLI runner for scoped non-interactive coding sessions in worktrees",
+        env_keys: &["DASHSCOPE_API_KEY", "OPENAI_API_KEY", "QWEN_CODE_HOME"],
+        argv_template: &["-p", "${prompt}"],
+        profile_required: false,
+    })
+}
+
+pub fn cursor_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "cursor-agent.agent",
+        display_name: "Cursor Agent",
+        binary: "cursor-agent",
+        description:
+            "Cursor Agent CLI runner for scoped non-interactive coding sessions in worktrees",
+        env_keys: &["CURSOR_API_KEY", "CURSOR_CONFIG_DIR"],
+        argv_template: &["-p", "${prompt}", "--output-format", "json"],
+        profile_required: false,
+    })
+}
+
+pub fn amp_agent_worker_manifest() -> WorkerManifest {
+    agent_runner_worker_manifest(AgentRunnerManifestSpec {
+        name: "amp.agent",
+        display_name: "Amp",
+        binary: "amp",
+        description: "Amp CLI runner for scoped execute-mode coding sessions in worktrees",
+        env_keys: &["AMP_API_KEY", "AMP_SETTINGS_FILE"],
+        argv_template: &["--execute", "${prompt}", "--stream-json"],
+        profile_required: false,
+    })
+}
+
 pub fn agent_runner_worker_manifests() -> Vec<WorkerManifest> {
     vec![
         codex_agent_worker_manifest(),
         claude_code_agent_worker_manifest(),
         hermes_agent_worker_manifest(),
         opencode_agent_worker_manifest(),
+        openclaw_agent_worker_manifest(),
+        gemini_cli_agent_worker_manifest(),
+        goose_agent_worker_manifest(),
+        aider_agent_worker_manifest(),
+        openhands_agent_worker_manifest(),
+        crush_agent_worker_manifest(),
+        qwen_code_agent_worker_manifest(),
+        cursor_agent_worker_manifest(),
+        amp_agent_worker_manifest(),
     ]
 }
 

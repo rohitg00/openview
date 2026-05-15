@@ -1,7 +1,10 @@
 use openview_core::{CapabilityRisk, ResourceKind};
 use openview_worker::{
-    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
-    hermes_agent_worker_manifest, opencode_agent_worker_manifest, runtime_manifest_json,
+    aider_agent_worker_manifest, amp_agent_worker_manifest, claude_code_agent_worker_manifest,
+    codex_agent_worker_manifest, crush_agent_worker_manifest, cursor_agent_worker_manifest,
+    gemini_cli_agent_worker_manifest, git_worktree_worker_manifest, goose_agent_worker_manifest,
+    hermes_agent_worker_manifest, openclaw_agent_worker_manifest, opencode_agent_worker_manifest,
+    openhands_agent_worker_manifest, qwen_code_agent_worker_manifest, runtime_manifest_json,
     terminal_pty_worker_manifest,
 };
 
@@ -93,5 +96,60 @@ fn worker_crate_exposes_codex_claude_and_opencode_agent_manifests() {
         assert!(manifest.dependencies.contains("approval.gate"));
         assert!(json.contains(&format!("{function_prefix}::spawn_session")));
         assert!(json.contains(&format!("{function_prefix}::stream_events")));
+    }
+}
+
+#[test]
+fn worker_crate_exposes_additional_agent_runner_manifests() {
+    for (manifest, function_prefix, binary) in [
+        (
+            openclaw_agent_worker_manifest(),
+            "openclaw.agent",
+            "openclaw",
+        ),
+        (
+            gemini_cli_agent_worker_manifest(),
+            "gemini-cli.agent",
+            "gemini",
+        ),
+        (goose_agent_worker_manifest(), "goose.agent", "goose"),
+        (aider_agent_worker_manifest(), "aider.agent", "aider"),
+        (
+            openhands_agent_worker_manifest(),
+            "openhands.agent",
+            "openhands",
+        ),
+        (crush_agent_worker_manifest(), "crush.agent", "crush"),
+        (qwen_code_agent_worker_manifest(), "qwen-code.agent", "qwen"),
+        (
+            cursor_agent_worker_manifest(),
+            "cursor-agent.agent",
+            "cursor-agent",
+        ),
+        (amp_agent_worker_manifest(), "amp.agent", "amp"),
+    ] {
+        let json = runtime_manifest_json(&manifest).expect("manifest serializes");
+        assert_eq!(manifest.name, function_prefix);
+        assert_eq!(manifest.binary_name.as_deref(), Some(binary));
+        assert!(manifest.resources.contains(&ResourceKind::GitWorktree));
+        assert!(manifest.resources.contains(&ResourceKind::Process));
+        assert!(manifest.resources.contains(&ResourceKind::SessionState));
+        assert!(manifest.resources.contains(&ResourceKind::EventStream));
+        assert!(manifest.dependencies.contains("git.worktree"));
+        assert!(manifest.dependencies.contains("shell.sandbox"));
+        assert!(manifest.dependencies.contains("approval.gate"));
+        assert!(json.contains(&format!("{function_prefix}::spawn_session")));
+        assert!(json.contains(&format!("{function_prefix}::send_prompt")));
+        assert!(json.contains(&format!("{function_prefix}::stream_events")));
+        assert!(json.contains(&format!("{function_prefix}::resolve_approval")));
+        assert!(json.contains("\"env_keys\""));
+        assert!(
+            !json.contains("\"env\":"),
+            "manifest must expose secret key names, not env values"
+        );
+        assert!(
+            !json.contains("\"environment\":"),
+            "manifest must not serialize secret-bearing env maps"
+        );
     }
 }

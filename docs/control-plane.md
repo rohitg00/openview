@@ -37,10 +37,14 @@ The current Rust foundation includes:
 - `TraceTimeline` — ordered event stream and function-call lifecycle.
 - `Worktree` — branch/worktree scoped engineering state.
 
-Agent runner panes should be backed by worker manifests, not hard-coded
-product branches. The first runner workers are `codex.agent`,
-`claude-code.agent`, `hermes.agent`, and `opencode.agent`; each owns the same
-session/event/approval contract and runs inside a selected worktree.
+Agent runner panes should be backed by worker manifests, not hard-coded product
+branches. AgentView presents runner workers for Codex, Claude Code, Hermes,
+OpenClaw, OpenCode, Gemini CLI, Goose, Aider, OpenHands, Crush, Qwen Code,
+Cursor Agent, and Amp. Each runner owns the same session/event/approval contract
+and runs inside a selected worktree. The current Rust implementation exposes
+manifest and invocation contracts for that expanded catalog; the control plane
+should surface each runner based on installed iii worker packages and live
+health checks.
 
 ## Why this matters
 
@@ -93,10 +97,24 @@ The control plane should read from OpenView APIs that are backed by an iii adapt
 - `hook-fanout::publish_collect` fans before/after function-call hooks to policy, approval, budget, and evidence subscribers.
 - `approval::list_pending` and `approval::resolve` back the approval queue pane.
 - `run::start_and_wait` is the adapter target for Hermes-compatible agent turns.
-- `git.worktree` plus `shell::exec_bg` launches `codex.agent`, `claude-code.agent`, `hermes.agent`, and `opencode.agent` side-by-side while AgentView tracks each session, worktree, approval queue, and event stream.
+- `git.worktree` plus the shell/process sandbox launches AgentView runner workers such as `codex.agent`, `claude-code.agent`, `hermes.agent`, `openclaw.agent`, `opencode.agent`, `gemini-cli.agent`, `goose.agent`, `aider.agent`, `openhands.agent`, `crush.agent`, `qwen-code.agent`, `cursor-agent.agent`, and `amp.agent` side-by-side while AgentView tracks each session, worktree, approval queue, and event stream.
 - `session-tree::*` stores transcript/history so a run can be resumed or exported.
 - shell sandbox workers execute scoped commands only after OpenView policy allows them.
 - harness composes the UI/event streaming path for local operator surfaces.
+
+## AgentView worker install flow
+
+AgentView should discover runner capability from installed iii workers, not from
+hard-coded local binaries. The operator flow is:
+
+1. Install shared primitives with `iii worker add git-worktree`, `iii worker add shell`, `iii worker add approval-gate`, `iii worker add session-tree`, `iii worker add iii-database`, `iii worker add iii-queue`, `iii worker add auth-credentials`, and the model-provider/router workers needed by the project.
+2. Install runner wrappers with `iii worker add codex-agent`, `iii worker add claude-code-agent`, `iii worker add hermes-agent`, `iii worker add openclaw-agent`, `iii worker add opencode-agent`, `iii worker add gemini-cli-agent`, `iii worker add goose-agent`, `iii worker add aider-agent`, `iii worker add openhands-agent`, `iii worker add crush-agent`, `iii worker add qwen-code-agent`, `iii worker add cursor-agent`, or `iii worker add amp-agent`.
+3. Install the upstream agent CLI binaries separately, then configure the wrapper with binary path, working directory policy, env key names, model/provider selection, and approval policy.
+4. Start iii and let the control plane read worker manifests, health, streams, approvals, and session-tree history through OpenView APIs.
+
+Until a runner has a manifest, invocation contract, and live adapter coverage,
+the control plane should label it unavailable or experimental instead of
+claiming a completed runtime.
 
 Local live check: `scripts/e2e_iii_runtime.sh` uses a configured `III_BIN` path and verifies the running iii engine plus harness workers without requiring `iii` to be on `PATH`.
 

@@ -1,10 +1,44 @@
 use openview_core::{
-    claude_code_agent_worker_manifest, codex_agent_worker_manifest, git_worktree_worker_manifest,
-    hermes_agent_worker_manifest, opencode_agent_worker_manifest, terminal_pty_worker_manifest,
-    AgentBlueprint, BackendTarget, CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec,
-    FunctionVisibility, OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile,
-    TriggerSpec, WorkerManifest,
+    git_worktree_worker_manifest, terminal_pty_worker_manifest, AgentBlueprint, BackendTarget,
+    CapabilityRisk, ConnectionGraph, ExecutionMode, FunctionSpec, FunctionVisibility,
+    OpenViewRuntime, PermissionPolicy, ResourceKind, RunPhase, SandboxProfile, TriggerSpec,
+    WorkerManifest,
 };
+
+const AGENT_CLI_WORKERS: &[(&str, &str)] = &[
+    ("codex.agent", "codex"),
+    ("claude-code.agent", "claude"),
+    ("hermes.agent", "hermes"),
+    ("opencode.agent", "opencode"),
+    ("openclaw.agent", "openclaw"),
+    ("gemini-cli.agent", "gemini"),
+    ("goose.agent", "goose"),
+    ("aider.agent", "aider"),
+    ("openhands.agent", "openhands"),
+    ("crush.agent", "crush"),
+    ("qwen-code.agent", "qwen"),
+    ("cursor-agent.agent", "cursor-agent"),
+    ("amp.agent", "amp"),
+];
+
+fn agent_manifest(name: &str) -> WorkerManifest {
+    match name {
+        "codex.agent" => openview_core::codex_agent_worker_manifest(),
+        "claude-code.agent" => openview_core::claude_code_agent_worker_manifest(),
+        "hermes.agent" => openview_core::hermes_agent_worker_manifest(),
+        "opencode.agent" => openview_core::opencode_agent_worker_manifest(),
+        "openclaw.agent" => openview_core::openclaw_agent_worker_manifest(),
+        "gemini-cli.agent" => openview_core::gemini_cli_agent_worker_manifest(),
+        "goose.agent" => openview_core::goose_agent_worker_manifest(),
+        "aider.agent" => openview_core::aider_agent_worker_manifest(),
+        "openhands.agent" => openview_core::openhands_agent_worker_manifest(),
+        "crush.agent" => openview_core::crush_agent_worker_manifest(),
+        "qwen-code.agent" => openview_core::qwen_code_agent_worker_manifest(),
+        "cursor-agent.agent" => openview_core::cursor_agent_worker_manifest(),
+        "amp.agent" => openview_core::amp_agent_worker_manifest(),
+        _ => panic!("unknown agent manifest: {name}"),
+    }
+}
 
 #[test]
 fn built_in_catalog_contains_first_class_git_worktree_worker() {
@@ -31,37 +65,31 @@ fn built_in_catalog_contains_first_class_terminal_pty_worker() {
 #[test]
 fn built_in_catalog_contains_first_class_agent_cli_workers() {
     let catalog = openview_core::built_in_worker_catalog();
-    for (name, expected) in [
-        ("codex.agent", codex_agent_worker_manifest()),
-        ("claude-code.agent", claude_code_agent_worker_manifest()),
-        ("hermes.agent", hermes_agent_worker_manifest()),
-        ("opencode.agent", opencode_agent_worker_manifest()),
-    ] {
+    for (name, _) in AGENT_CLI_WORKERS.iter().copied() {
         let manifest = catalog
             .iter()
             .find(|worker| worker.name == name)
             .unwrap_or_else(|| panic!("{name} is registered in the built-in catalog"));
+        let expected = agent_manifest(name);
         assert_eq!(manifest, &expected);
     }
 }
 
 #[test]
 fn agent_cli_manifests_declare_orca_style_worktree_runner_contracts() {
-    for (name, binary) in [
-        ("codex.agent", "codex"),
-        ("claude-code.agent", "claude"),
-        ("hermes.agent", "hermes"),
-        ("opencode.agent", "opencode"),
-    ] {
-        let manifest = match name {
-            "codex.agent" => codex_agent_worker_manifest(),
-            "claude-code.agent" => claude_code_agent_worker_manifest(),
-            "hermes.agent" => hermes_agent_worker_manifest(),
-            "opencode.agent" => opencode_agent_worker_manifest(),
-            _ => unreachable!(),
-        };
+    for (name, binary) in AGENT_CLI_WORKERS.iter().copied() {
+        let manifest = agent_manifest(name);
         assert_eq!(manifest.name, name);
         assert_eq!(manifest.binary_name.as_deref(), Some(binary));
+        assert_eq!(manifest.default_config["binary"], binary);
+        assert_eq!(
+            manifest.default_config["event_stream"],
+            format!("openview.worker.{name}.events")
+        );
+        assert_eq!(
+            manifest.default_config["approval_queue"],
+            format!("openview.worker.{name}.approvals")
+        );
         assert_eq!(manifest.deploy_kind, "local_cli");
         assert!(manifest.targets.contains(&BackendTarget::LocalBinary));
         assert!(manifest.resources.contains(&ResourceKind::GitWorktree));
@@ -88,6 +116,16 @@ fn agent_cli_manifests_declare_orca_style_worktree_runner_contracts() {
             .network
             .hosts
             .contains("${OPENVIEW_AGENT_PROVIDER_HOST}"));
+        for env_key in manifest.default_config["env_keys"]
+            .as_array()
+            .expect("env_keys is an array")
+        {
+            let env_key = env_key.as_str().expect("env key is a string");
+            assert!(
+                sandbox.secret_names.contains(env_key),
+                "sandbox exposes configured env key {env_key}"
+            );
+        }
 
         let spawn = manifest
             .functions
@@ -110,10 +148,40 @@ fn agent_cli_manifests_declare_orca_style_worktree_runner_contracts() {
     }
 
     assert_eq!(
-        hermes_agent_worker_manifest().functions[0].request_schema["required"],
+        openview_core::hermes_agent_worker_manifest().functions[0].request_schema["required"],
         serde_json::json!(["profile", "prompt", "workspace"]),
         "Hermes keeps profile required because the CLI profile selects isolated credentials/config"
     );
+    assert_eq!(
+        openview_core::openclaw_agent_worker_manifest().functions[0].request_schema["required"],
+        serde_json::json!(["profile", "prompt", "workspace"]),
+        "OpenClaw keeps profile required because profiles isolate state and credentials"
+    );
+}
+
+#[test]
+fn built_in_catalog_agent_cli_workers_are_unique_and_expanded() {
+    let catalog = openview_core::built_in_worker_catalog();
+    let agent_names = catalog
+        .iter()
+        .filter(|worker| worker.name.ends_with(".agent"))
+        .map(|worker| worker.name.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(agent_names.len(), AGENT_CLI_WORKERS.len());
+    for (name, _) in AGENT_CLI_WORKERS.iter().copied() {
+        assert!(
+            agent_names.contains(&name),
+            "{name} is present exactly once in agent catalog"
+        );
+        assert_eq!(
+            agent_names
+                .iter()
+                .filter(|candidate| **candidate == name)
+                .count(),
+            1
+        );
+    }
 }
 
 #[test]

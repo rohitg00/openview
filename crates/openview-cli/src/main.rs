@@ -4,7 +4,7 @@ use openview_core::{
     built_in_worker_catalog, CancelRunRequest, CheckRunStatus, ConnectionGraph, DiffReviewComment,
     EventPage, LocalRunStore, MergeReadiness, OpenViewControlApi, OpenViewRuntime,
     PullRequestMetadata, RejectApprovalRequest, ResourceKind, ReviewWorkflow, RunPhase, RunRecord,
-    TodoBlocker, WorkerRuntimeSpec,
+    TodoBlocker, WorkerManifest, WorkerRuntimeSpec,
 };
 use openview_worker::{
     approval_worker_manifest, claude_code_agent_worker_manifest, codex_agent_worker_manifest,
@@ -141,20 +141,7 @@ fn main() -> Result<()> {
             EvidenceCommand::ExportDemo => println!("{}", evidence_export_demo_json()?),
         },
         Command::Manifest { worker } => {
-            let manifest = match worker.as_str() {
-                "approval.gate" => approval_worker_manifest(),
-                "codex.agent" => codex_agent_worker_manifest(),
-                "claude-code.agent" => claude_code_agent_worker_manifest(),
-                "git.worktree" => git_worktree_worker_manifest(),
-                "hermes.agent" => hermes_agent_worker_manifest(),
-                "opencode.agent" => opencode_agent_worker_manifest(),
-                "shell.sandbox" => shell_sandbox_worker_manifest(),
-                "terminal.pty" => terminal_pty_worker_manifest(),
-                other => built_in_worker_catalog()
-                    .into_iter()
-                    .find(|candidate| candidate.name == other)
-                    .ok_or_else(|| anyhow::anyhow!("unknown worker: {other}"))?,
-            };
+            let manifest = cli_worker_manifest(&worker)?;
             println!("{}", runtime_manifest_json(&manifest)?);
         }
         Command::Queues { command } => {
@@ -168,6 +155,30 @@ fn main() -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn cli_worker_manifest(worker: &str) -> Result<WorkerManifest> {
+    let manifest = match worker {
+        "approval.gate" => approval_worker_manifest(),
+        "codex.agent" => codex_agent_worker_manifest(),
+        "claude-code.agent" => claude_code_agent_worker_manifest(),
+        "git.worktree" => git_worktree_worker_manifest(),
+        "hermes.agent" => hermes_agent_worker_manifest(),
+        "opencode.agent" => opencode_agent_worker_manifest(),
+        other @ ("openclaw.agent" | "gemini-cli.agent" | "goose.agent" | "aider.agent"
+        | "openhands.agent" | "crush.agent" | "qwen-code.agent" | "cursor-agent.agent"
+        | "amp.agent") => built_in_worker_catalog()
+            .into_iter()
+            .find(|candidate| candidate.name == other)
+            .ok_or_else(|| anyhow::anyhow!("unknown worker: {other}"))?,
+        "shell.sandbox" => shell_sandbox_worker_manifest(),
+        "terminal.pty" => terminal_pty_worker_manifest(),
+        other => built_in_worker_catalog()
+            .into_iter()
+            .find(|candidate| candidate.name == other)
+            .ok_or_else(|| anyhow::anyhow!("unknown worker: {other}"))?,
+    };
+    Ok(manifest)
 }
 
 fn approvals_command_json(command: ApprovalCommand) -> Result<String> {
@@ -685,6 +696,25 @@ mod tests {
         assert!(Cli::try_parse_from(["openview", "runs", "events"]).is_ok());
         assert!(Cli::try_parse_from(["openview", "runs", "cancel-demo"]).is_ok());
         assert!(Cli::try_parse_from(["openview", "evidence", "export-demo"]).is_ok());
+    }
+
+    #[test]
+    fn manifest_lookup_includes_expanded_agent_catalog() {
+        for (worker, binary) in [
+            ("openclaw.agent", "openclaw"),
+            ("gemini-cli.agent", "gemini"),
+            ("goose.agent", "goose"),
+            ("aider.agent", "aider"),
+            ("openhands.agent", "openhands"),
+            ("crush.agent", "crush"),
+            ("qwen-code.agent", "qwen"),
+            ("cursor-agent.agent", "cursor-agent"),
+            ("amp.agent", "amp"),
+        ] {
+            let manifest = cli_worker_manifest(worker).unwrap();
+            assert_eq!(manifest.name, worker);
+            assert_eq!(manifest.binary_name.as_deref(), Some(binary));
+        }
     }
 
     #[test]

@@ -9,7 +9,7 @@ The goal is not to be another thin agent wrapper. OpenView is a product and runt
 OpenView is a small orchestrator with a large systems shape:
 
 - **Rust core** for manifests, registry, graph compilation, run state, approvals, sandbox policy, and backend messages.
-- **Worker catalog** for approval, shell sandbox, turn orchestration, model routing, policy, storage, state, streams, budgets, hooks, credentials, MCP, terminals, worktrees, and agent CLI runners such as Codex, Claude Code, Hermes, and OpenCode.
+- **Worker catalog** for approval, shell sandbox, turn orchestration, model routing, policy, storage, state, streams, budgets, hooks, credentials, MCP, terminals, worktrees, and AgentView runner workers for agent CLIs such as Codex, Claude Code, Hermes, OpenClaw, OpenCode, Gemini CLI, Goose, Aider, OpenHands, Crush, Qwen Code, Cursor Agent, and Amp.
 - **Backend-compatible protocol boundary** that can register workers, functions, and triggers without vendoring another engine.
 - **iii primitive adapter target** for queue-backed tasks, database transactions, event streams, approvals, session history, shell sandbox execution, and harness-backed UI/event streaming.
 - **CLI** for inspecting worker manifests and running local demos.
@@ -79,7 +79,7 @@ OpenView does not treat workers as generic labels. A worker manifest declares th
 - `Terminal` — interactive command sessions.
 - `GitWorktree` — branch/worktree scoped agent work.
 
-## Agent runner workers
+## AgentView runner workers
 
 OpenView now models local coding agents as first-class workers instead of loose
 commands in a text box:
@@ -89,26 +89,70 @@ commands in a text box:
 | `codex.agent` | `codex` | Non-interactive Codex CLI runs in isolated worktrees. |
 | `claude-code.agent` | `claude` | Claude Code print-mode sessions in isolated worktrees. |
 | `hermes.agent` | `hermes` | Hermes profile/session runs with skills, toolsets, approvals, and events. |
+| `openclaw.agent` | `openclaw` | OpenClaw runs with the same worktree/session contract. |
 | `opencode.agent` | `opencode` | OpenCode runs in isolated worktrees. |
+| `gemini-cli.agent` | `gemini` | Gemini CLI runs with normalized events and approvals. |
+| `goose.agent` | `goose` | Goose sessions wrapped as function-call worker runs. |
+| `aider.agent` | `aider` | Aider coding sessions scoped to a selected worktree. |
+| `openhands.agent` | `openhands` | OpenHands CLI/session runs behind the AgentView contract. |
+| `crush.agent` | `crush` | Crush agent runs with replayable output streams. |
+| `qwen-code.agent` | `qwen` | Qwen Code CLI runs through the shared runner contract. |
+| `cursor-agent.agent` | `cursor-agent` | Cursor Agent CLI runs through AgentView. |
+| `amp.agent` | `amp` | Amp agent runs through AgentView. |
 
-These workers depend on `git.worktree`, `shell.sandbox`, and `approval.gate`.
-AgentView should create or select a worktree, launch the selected agent worker,
-stream normalized events, and show the session next to other active agents.
-This is the Orca/Conductor-style surface: several agents, each with its own
-workspace/worktree, tracked in one control plane.
+Every runner is wrapped as an iii function-call worker. The runner contract is
+the same even when the underlying CLI flags differ: create or select a
+`git.worktree`, launch the CLI through the shell/process sandbox, route risky
+actions through `approval.gate`, write ordered output to iii streams, persist
+history in `session-tree`, store durable task/run state in `iii-database` and
+`iii-queue`, and resolve credentials/models through the configured credential
+and model-provider workers.
 
-The iii substrate still installs through `iii worker add`:
+AgentView should then show several agents side-by-side, each with its own
+workspace/worktree, approval queue, event stream, and session history. The Rust
+code exposes concrete manifest and invocation contracts for the full runner
+catalog above. That is not the same as complete production runtime parity: each
+runner still needs its upstream CLI installed and live adapter checks for its
+package before operators should mark it production-ready.
+
+The DevEx install path is always the iii worker manager. Install the shared
+substrate first:
 
 ```bash
 iii worker add shell
+iii worker add git-worktree
 iii worker add approval-gate
 iii worker add session-tree
+iii worker add iii-database
+iii worker add iii-queue
+iii worker add auth-credentials
+iii worker add provider-router
 iii worker add subagent
 iii worker add harness
 ```
 
-The agent runner binaries are local CLI tools referenced by those worker
-manifests. Verify the catalog contracts with:
+Then add the runner workers you want AgentView to offer. Published worker
+packages should follow the same explicit `iii worker add ...` flow:
+
+```bash
+iii worker add codex-agent
+iii worker add claude-code-agent
+iii worker add hermes-agent
+iii worker add openclaw-agent
+iii worker add opencode-agent
+iii worker add gemini-cli-agent
+iii worker add goose-agent
+iii worker add aider-agent
+iii worker add openhands-agent
+iii worker add crush-agent
+iii worker add qwen-code-agent
+iii worker add cursor-agent
+iii worker add amp-agent
+```
+
+The agent runner binaries remain local CLI tools referenced by worker manifests;
+`iii worker add` installs/configures the wrapper, not the upstream CLI itself.
+Verify the catalog contracts that are implemented in this repo with:
 
 ```bash
 cargo run -p openview-cli -- manifest codex.agent

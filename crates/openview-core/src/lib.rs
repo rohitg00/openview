@@ -19,6 +19,8 @@ pub enum OpenViewError {
     AgentNotFound(String),
     #[error("approval not found: {0}")]
     ApprovalNotFound(Uuid),
+    #[error("run not found: {0}")]
+    RunNotFound(Uuid),
     #[error("graph has no agents")]
     EmptyGraph,
     #[error("workspace has no tabs")]
@@ -786,6 +788,21 @@ pub struct RunEvent {
     pub payload: Value,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EventCursor {
+    pub run_id: Uuid,
+    pub after_sequence: u64,
+    pub limit: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EventPage {
+    pub run_id: Uuid,
+    pub events: Vec<RunEvent>,
+    pub next_after_sequence: u64,
+    pub has_more: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct StepRecord {
     pub id: Uuid,
@@ -818,6 +835,44 @@ impl OpenViewRuntime {
 
     pub fn registry(&self) -> &WorkerRegistry {
         &self.registry
+    }
+
+    pub fn run(&self, run_id: Uuid) -> Option<&RunRecord> {
+        self.runs.get(&run_id)
+    }
+
+    pub fn events_since(
+        &self,
+        run_id: Uuid,
+        after_sequence: u64,
+        limit: usize,
+    ) -> Result<EventPage, OpenViewError> {
+        let run = self
+            .runs
+            .get(&run_id)
+            .ok_or(OpenViewError::RunNotFound(run_id))?;
+        let events = run
+            .events
+            .iter()
+            .filter(|event| event.sequence > after_sequence)
+            .take(limit)
+            .cloned()
+            .collect::<Vec<_>>();
+        let next_after_sequence = events
+            .last()
+            .map(|event| event.sequence)
+            .unwrap_or(after_sequence);
+        let has_more = run
+            .events
+            .iter()
+            .any(|event| event.sequence > next_after_sequence);
+
+        Ok(EventPage {
+            run_id,
+            events,
+            next_after_sequence,
+            has_more,
+        })
     }
 
     pub fn start_run<I, S>(

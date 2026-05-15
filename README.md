@@ -129,7 +129,9 @@ The test suite covers the core contract:
 - worker manifests include functions, resources, security policy, and sandbox profile;
 - agent graphs connect planner/builder/reviewer with approval gates and shared resources;
 - run state blocks on approval and resumes to completed;
-- backend-compatible registration messages are emitted without depending on backend internals.
+- backend-compatible registration messages are emitted without depending on backend internals;
+- workspace sessions model tabs, panes, worktrees, traces, and approvals;
+- worker runtime specs track binary lifecycle and health without storing secret values.
 
 ## Roadmap
 
@@ -137,7 +139,7 @@ The test suite covers the core contract:
 2. **Worker runtime:** binary worker process runner, manifest validator, health checks.
 3. **Sandbox runner:** filesystem/process/network policy enforcement for local commands.
 4. **Durable backend adapter:** WebSocket registration, invocation, queueing, event streams.
-5. **Agent View UI:** sessions, runs, workers, approvals, traces, worktrees, terminals.
+5. **Agent View UI:** sessions, runs, workers, approvals, traces, worktrees, terminals. See `docs/control-plane.md`.
 6. **Worker marketplace/catalog:** documented worker resources and safe install flows.
 7. **Review loop:** every run produces evidence about what improved, what broke, and what needs hardening.
 

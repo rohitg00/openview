@@ -113,3 +113,49 @@ fn emits_three_i_compatible_registration_messages_without_engine_dependency() {
     assert_eq!(json[2]["type"], "registertrigger");
     assert_eq!(json[2]["config"]["api_path"], "/storage/put");
 }
+
+#[test]
+fn workspace_session_models_control_plane_tabs_panes_and_worktrees() {
+    use openview_core::{PaneKind, WorkspacePane, WorkspaceSession, WorkspaceTab, WorktreeBinding};
+
+    let session = WorkspaceSession::new("agent review room")
+        .tab(
+            WorkspaceTab::new("tab-runs", "Runs")
+                .pane(WorkspacePane::new(
+                    "pane-trace",
+                    PaneKind::TraceTimeline,
+                    "Trace",
+                ))
+                .pane(WorkspacePane::new(
+                    "pane-approvals",
+                    PaneKind::ApprovalQueue,
+                    "Approvals",
+                )),
+        )
+        .worktree(WorktreeBinding::new(
+            "wt-openview",
+            "/repo/openview",
+            "main",
+        ));
+
+    session.validate().expect("workspace session is restorable");
+    assert_eq!(
+        session.tabs[0].active_pane_id.as_deref(),
+        Some("pane-trace")
+    );
+    assert_eq!(session.worktrees[0].branch, "main");
+}
+
+#[test]
+fn worker_runtime_spec_tracks_binary_lifecycle_and_safe_env_key_names_only() {
+    use openview_core::{WorkerHealthState, WorkerRuntimeSpec};
+
+    let runtime = WorkerRuntimeSpec::new("shell.sandbox", "openview-worker-shell")
+        .arg("--manifest")
+        .env_key("OPENVIEW_WORKER_CONFIG")
+        .ready();
+
+    assert_eq!(runtime.health_state, WorkerHealthState::Ready);
+    assert_eq!(runtime.env_keys, vec!["OPENVIEW_WORKER_CONFIG"]);
+    assert!(runtime.last_heartbeat_at.is_some());
+}

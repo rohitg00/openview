@@ -21,6 +21,10 @@ pub enum OpenViewError {
     ApprovalNotFound(Uuid),
     #[error("graph has no agents")]
     EmptyGraph,
+    #[error("workspace has no tabs")]
+    EmptyWorkspace,
+    #[error("workspace active pane not found: {0}")]
+    UnknownPane(String),
     #[error("handoff references unknown agent: {0}")]
     UnknownHandoffAgent(String),
 }
@@ -401,6 +405,204 @@ pub enum BackendMessage {
         config: Value,
         metadata: Value,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneKind {
+    AgentRun,
+    Terminal,
+    Editor,
+    Browser,
+    Notes,
+    ApprovalQueue,
+    WorkerCatalog,
+    TraceTimeline,
+    Worktree,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspacePane {
+    pub id: String,
+    pub kind: PaneKind,
+    pub title: String,
+    pub resource: Option<ResourceKind>,
+    pub active_run: Option<Uuid>,
+}
+
+impl WorkspacePane {
+    pub fn new(id: impl Into<String>, kind: PaneKind, title: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            kind,
+            title: title.into(),
+            resource: None,
+            active_run: None,
+        }
+    }
+
+    pub fn resource(mut self, resource: ResourceKind) -> Self {
+        self.resource = Some(resource);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceTab {
+    pub id: String,
+    pub title: String,
+    pub panes: Vec<WorkspacePane>,
+    pub active_pane_id: Option<String>,
+}
+
+impl WorkspaceTab {
+    pub fn new(id: impl Into<String>, title: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            title: title.into(),
+            panes: Vec::new(),
+            active_pane_id: None,
+        }
+    }
+
+    pub fn pane(mut self, pane: WorkspacePane) -> Self {
+        if self.active_pane_id.is_none() {
+            self.active_pane_id = Some(pane.id.clone());
+        }
+        self.panes.push(pane);
+        self
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeBinding {
+    pub id: String,
+    pub repo_path: String,
+    pub branch: String,
+    pub base_ref: Option<String>,
+    pub head_sha: Option<String>,
+    pub linked_run: Option<Uuid>,
+}
+
+impl WorktreeBinding {
+    pub fn new(
+        id: impl Into<String>,
+        repo_path: impl Into<String>,
+        branch: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            repo_path: repo_path.into(),
+            branch: branch.into(),
+            base_ref: None,
+            head_sha: None,
+            linked_run: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkspaceSession {
+    pub id: Uuid,
+    pub name: String,
+    pub tabs: Vec<WorkspaceTab>,
+    pub worktrees: Vec<WorktreeBinding>,
+    pub restored_runs: Vec<Uuid>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+impl WorkspaceSession {
+    pub fn new(name: impl Into<String>) -> Self {
+        let now = Utc::now();
+        Self {
+            id: Uuid::new_v4(),
+            name: name.into(),
+            tabs: Vec::new(),
+            worktrees: Vec::new(),
+            restored_runs: Vec::new(),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn tab(mut self, tab: WorkspaceTab) -> Self {
+        self.tabs.push(tab);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn worktree(mut self, worktree: WorktreeBinding) -> Self {
+        self.worktrees.push(worktree);
+        self.updated_at = Utc::now();
+        self
+    }
+
+    pub fn validate(&self) -> Result<(), OpenViewError> {
+        if self.tabs.is_empty() {
+            return Err(OpenViewError::EmptyWorkspace);
+        }
+        for tab in &self.tabs {
+            if let Some(active) = &tab.active_pane_id {
+                if !tab.panes.iter().any(|pane| &pane.id == active) {
+                    return Err(OpenViewError::UnknownPane(active.clone()));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkerHealthState {
+    Unknown,
+    Starting,
+    Ready,
+    Degraded,
+    Stopped,
+    Failed,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WorkerRuntimeSpec {
+    pub worker_id: WorkerId,
+    pub binary: String,
+    pub args: Vec<String>,
+    pub env_keys: Vec<String>,
+    pub working_directory: Option<String>,
+    pub health_state: WorkerHealthState,
+    pub last_heartbeat_at: Option<DateTime<Utc>>,
+}
+
+impl WorkerRuntimeSpec {
+    pub fn new(worker_id: impl Into<String>, binary: impl Into<String>) -> Self {
+        Self {
+            worker_id: worker_id.into(),
+            binary: binary.into(),
+            args: Vec::new(),
+            env_keys: Vec::new(),
+            working_directory: None,
+            health_state: WorkerHealthState::Unknown,
+            last_heartbeat_at: None,
+        }
+    }
+
+    pub fn arg(mut self, arg: impl Into<String>) -> Self {
+        self.args.push(arg.into());
+        self
+    }
+
+    pub fn env_key(mut self, key: impl Into<String>) -> Self {
+        self.env_keys.push(key.into());
+        self
+    }
+
+    pub fn ready(mut self) -> Self {
+        self.health_state = WorkerHealthState::Ready;
+        self.last_heartbeat_at = Some(Utc::now());
+        self
+    }
 }
 
 #[derive(Debug, Default, Clone)]
